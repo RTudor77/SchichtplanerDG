@@ -1,0 +1,39 @@
+{
+  "pool_vm_alle": [
+    "MH",
+    "RI",
+    "TR",
+    "JB",
+    "ES",
+    "FA",
+    "RR",
+    "IL"
+  ],
+  "pool_vm_teilweise": [
+    "MH",
+    "RI",
+    "ES"
+  ],
+  "pool_vm_support": [
+    "IL",
+    "RR",
+    "FA",
+    "JB",
+    "AN",
+    "TR"
+  ],
+  "pool_nm_alle": [
+    "IL",
+    "RR",
+    "FA",
+    "ES",
+    "JB",
+    "AN",
+    "TR",
+    "RI",
+    "MH"
+  ],
+  "pool_freitag_abwesend": [
+    "ES"
+  ]
+}
