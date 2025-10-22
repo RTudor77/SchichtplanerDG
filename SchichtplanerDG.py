@@ -143,7 +143,7 @@ Hinweise zur Pool-Konfiguration:
         right_frame.pack(side="left", fill="both", expand=True, padx=(10, 0))
 
         # Linke Seite – Grundeinstellungen
-        ttk.Label(left_frame, text="Grundeinstellungen", font=('TkDefaultFont', 11, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
+        ttk.Label(left_frame, text="Grundeinstellungen", font=('TkDefaultFont', 11, 'bold'), foreground='green').grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
 
         ttk.Label(left_frame, text="Startdatum (Montag, TT.MM.YYYY):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.start_date_entry = tk.Entry(left_frame, width=20)
