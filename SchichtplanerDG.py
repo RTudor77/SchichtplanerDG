@@ -103,7 +103,7 @@ class ShiftPlanner:
         self.pool_nm_alle_entry.insert(0, ",".join(self.config["pool_nm_alle"]))
 
         # Pool E
-        ttk.Label(scrollable_frame, text="Pool E - Freitags NICHT verfügbar:", font=('TkDefaultFont', 9, 'bold'), foreground='red').grid(row=4, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(scrollable_frame, text="Pool E - Freitags NICHT verfügbar:", font=('TkDefaultFont', 9, 'bold'), foreground='orange').grid(row=4, column=0, sticky="w", padx=5, pady=5)
         self.pool_freitag_abwesend_entry = tk.Entry(scrollable_frame, width=60)
         self.pool_freitag_abwesend_entry.grid(row=4, column=1, padx=5, pady=5)
         self.pool_freitag_abwesend_entry.insert(0, ",".join(self.config["pool_freitag_abwesend"]))
@@ -143,7 +143,7 @@ Hinweise zur Pool-Konfiguration:
         right_frame.pack(side="left", fill="both", expand=True, padx=(10, 0))
 
         # Linke Seite – Grundeinstellungen
-        ttk.Label(left_frame, text="Grundeinstellungen", font=('TkDefaultFont', 11, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
+        ttk.Label(left_frame, text="Grundeinstellungen", font=('TkDefaultFont', 11, 'bold'), foreground='orange').grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
 
         ttk.Label(left_frame, text="Startdatum (Montag, TT.MM.YYYY):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         self.start_date_entry = tk.Entry(left_frame, width=20)
