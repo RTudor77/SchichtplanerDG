@@ -36,7 +36,8 @@ class ShiftPlanner:
             "pool_vm_teilweise": [],       # Vormittag - können nicht alles (brauchen Support)
             "pool_vm_support": [],         # Vormittag - Support für Pool B
             "pool_nm_alle": [],            # Nachmittag - können alles
-            "pool_freitag_abwesend": []    # Freitags nicht verfügbar
+            "pool_freitag_abwesend": [],   # Freitags nicht verfügbar
+            "feiertage": []                # [{datum: "25.12", name: "1. Weihnachtstag", mitarbeiter: "XX"}]
         }
 
         # Cache für Performance
@@ -46,7 +47,6 @@ class ShiftPlanner:
         # Interne Zustandsverwaltung
         self.planning_result: List[Dict[str, str]] = []
         self.absences: Dict[int, List[str]] = {}
-        self.holidays: Dict[int, Dict[str, str]] = {}  # {tag_nr: {"name": "Feiertag", "mitarbeiter": "XX"}}
 
         self.load_config()
         self.create_gui()
@@ -132,57 +132,104 @@ class ShiftPlanner:
         return entry
 
     def create_pool_config_tab(self, notebook: ttk.Notebook) -> None:
-        """Erstellt Tab für Pool-Konfiguration"""
-        pool_frame = ttk.Frame(notebook)
+        """Erstellt Tab für Pool-Konfiguration mit Feiertagen"""
+        pool_frame = ttk.Frame(notebook, padding=10)
         notebook.add(pool_frame, text="Pool-Konfiguration")
 
-        # Scrollbarer Frame
-        canvas = tk.Canvas(pool_frame)
-        scrollbar_pool = ttk.Scrollbar(pool_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+        # Hauptcontainer: Links Pools, Rechts Feiertage
+        main_container = ttk.PanedWindow(pool_frame, orient="horizontal")
+        main_container.pack(fill="both", expand=True)
 
-        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar_pool.set)
+        # === LINKER BEREICH: Pool-Konfiguration ===
+        left_frame = ttk.LabelFrame(main_container, text=" Mitarbeiter-Pools ", padding=10)
 
         # Pools erstellen (DRY mit Hilfsmethode)
         self.pool_vm_alle_entry = self._create_pool_entry(
-            scrollable_frame, 0, "Pool A - Vormittag (können alles):", "pool_vm_alle"
+            left_frame, 0, "Pool A - Vormittag (können alles):", "pool_vm_alle"
         )
         self.pool_vm_teilweise_entry = self._create_pool_entry(
-            scrollable_frame, 1, "Pool B - Vormittag (brauchen Unterstützung):", "pool_vm_teilweise"
+            left_frame, 1, "Pool B - Vormittag (brauchen Unterstützung):", "pool_vm_teilweise"
         )
         self.pool_vm_support_entry = self._create_pool_entry(
-            scrollable_frame, 2, "Pool C - Support für Pool B:", "pool_vm_support"
+            left_frame, 2, "Pool C - Support für Pool B:", "pool_vm_support"
         )
         self.pool_nm_alle_entry = self._create_pool_entry(
-            scrollable_frame, 3, "Pool D - Nachmittag (können alles):", "pool_nm_alle"
+            left_frame, 3, "Pool D - Nachmittag (können alles):", "pool_nm_alle"
         )
         self.pool_freitag_abwesend_entry = self._create_pool_entry(
-            scrollable_frame, 4, "Pool E - Freitags NICHT verfügbar:", "pool_freitag_abwesend",
+            left_frame, 4, "Pool E - Freitags NICHT verfügbar:", "pool_freitag_abwesend",
             font=('TkDefaultFont', 9, 'bold'), foreground='orange'
         )
 
         # Speichern Button
-        ttk.Button(scrollable_frame, text="Pools speichern", command=self.save_pools).grid(
-            row=5, column=1, pady=20
+        ttk.Button(left_frame, text="Pools speichern", command=self.save_pools).grid(
+            row=5, column=1, pady=15, sticky="e"
         )
 
-        info_text = """
-Hinweise zur Pool-Konfiguration:
-• Mitarbeiter mit Komma trennen (z.B. RR,AN,MH,TL)
-• Reihenfolge wird bei der Planung berücksichtigt
-• Pool A: Mitarbeiter die vormittags alles alleine können
-• Pool B: Mitarbeiter die vormittags Unterstützung brauchen
-• Pool C: Mitarbeiter die Pool B unterstützen können  
-• Pool D: Mitarbeiter für Nachmittagsdienst
-• Pool E: Mitarbeiter die FREITAGS NICHT eingeteilt werden dürfen
-  (z.B. Homeoffice, Teilzeit, externe Termine)
-"""
-        ttk.Label(scrollable_frame, text=info_text, justify="left", font=('TkDefaultFont', 9)).grid(row=6, column=0, columnspan=2, padx=5, pady=10, sticky="w")
+        info_text = """Hinweise:
+• Mitarbeiter mit Komma trennen (z.B. RR,AN,MH)
+• Reihenfolge wird bei der Planung berücksichtigt"""
+        ttk.Label(left_frame, text=info_text, justify="left", font=('TkDefaultFont', 8),
+                 foreground='gray').grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky="w")
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar_pool.pack(side="right", fill="y")
+        main_container.add(left_frame, weight=2)
+
+        # === RECHTER BEREICH: Feiertage ===
+        right_frame = ttk.LabelFrame(main_container, text=" Feiertage (jährlich) ", padding=10)
+
+        # Eingabefelder für neuen Feiertag
+        input_frame = ttk.Frame(right_frame)
+        input_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(input_frame, text="Datum (TT.MM):").grid(row=0, column=0, sticky="w", padx=2)
+        self.holiday_date_var = tk.StringVar()
+        self.holiday_date_entry = ttk.Entry(input_frame, textvariable=self.holiday_date_var, width=8)
+        self.holiday_date_entry.grid(row=0, column=1, padx=5)
+
+        ttk.Label(input_frame, text="Name:").grid(row=0, column=2, sticky="w", padx=2)
+        self.holiday_name_var = tk.StringVar()
+        self.holiday_name_entry = ttk.Entry(input_frame, textvariable=self.holiday_name_var, width=20)
+        self.holiday_name_entry.grid(row=0, column=3, padx=5)
+
+        input_frame2 = ttk.Frame(right_frame)
+        input_frame2.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(input_frame2, text="Notdienst MA:").grid(row=0, column=0, sticky="w", padx=2)
+        self.holiday_employee_var = tk.StringVar()
+        self.holiday_employee_combo = ttk.Combobox(input_frame2, textvariable=self.holiday_employee_var, width=8)
+        self.holiday_employee_combo.grid(row=0, column=1, padx=5)
+
+        # Buttons
+        btn_frame = ttk.Frame(right_frame)
+        btn_frame.pack(fill="x", pady=(0, 10))
+        ttk.Button(btn_frame, text="+ Hinzufügen", command=self.add_holiday, width=12).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="- Entfernen", command=self.remove_holiday, width=12).pack(side="left", padx=2)
+
+        # Feiertage-Liste
+        holiday_columns = ("Datum", "Name", "MA")
+        self.holiday_tree = ttk.Treeview(right_frame, columns=holiday_columns, show="headings", height=12)
+        self.holiday_tree.heading("Datum", text="Datum")
+        self.holiday_tree.heading("Name", text="Name")
+        self.holiday_tree.heading("MA", text="Notdienst")
+        self.holiday_tree.column("Datum", width=70, anchor="center")
+        self.holiday_tree.column("Name", width=150, anchor="w")
+        self.holiday_tree.column("MA", width=70, anchor="center")
+
+        scrollbar_holiday = ttk.Scrollbar(right_frame, orient="vertical", command=self.holiday_tree.yview)
+        self.holiday_tree.configure(yscrollcommand=scrollbar_holiday.set)
+
+        self.holiday_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_holiday.pack(side="right", fill="y")
+
+        # Feiertage aus Config laden
+        self.update_holiday_display()
+
+        main_container.add(right_frame, weight=1)
+
+        info_label = ttk.Label(pool_frame, text="Feiertage werden dauerhaft gespeichert. "
+                              "Der Notdienst-MA wird in der Planungswoche von regulären Schichten ausgeschlossen.",
+                              font=('TkDefaultFont', 8), foreground='gray')
+        info_label.pack(fill="x", pady=(10, 0))
 
     def create_shift_planning_tab(self, notebook: ttk.Notebook) -> None:
         """Erstellt Tab für Schichtplanung - MODERNES LAYOUT"""
@@ -256,93 +303,43 @@ Hinweise zur Pool-Konfiguration:
 
         main_paned.add(result_frame, weight=3)
 
-        # === RECHTER BEREICH: Abwesenheiten + Feiertage ===
-        right_container = ttk.Frame(main_paned)
-
-        # --- Abwesenheiten (oben) ---
-        absence_frame = ttk.LabelFrame(right_container, text=" Abwesenheiten ", padding=5)
-        absence_frame.pack(fill="both", expand=True, pady=(0, 5))
+        # === RECHTER BEREICH: Abwesenheiten ===
+        absence_frame = ttk.LabelFrame(main_paned, text=" Abwesenheiten (temporär) ", padding=10)
 
         input_absence_frame = ttk.Frame(absence_frame)
-        input_absence_frame.pack(fill="x", pady=(0, 5))
+        input_absence_frame.pack(fill="x", pady=(0, 10))
 
         ttk.Label(input_absence_frame, text="MA:").grid(row=0, column=0, sticky="w")
         self.employee_var = tk.StringVar()
-        self.employee_combo = ttk.Combobox(input_absence_frame, textvariable=self.employee_var, width=8)
-        self.employee_combo.grid(row=0, column=1, padx=3)
+        self.employee_combo = ttk.Combobox(input_absence_frame, textvariable=self.employee_var, width=10)
+        self.employee_combo.grid(row=0, column=1, padx=5)
 
         ttk.Label(input_absence_frame, text="Tag:").grid(row=0, column=2, sticky="w")
         self.day_var = tk.StringVar()
-        self.day_combo = ttk.Combobox(input_absence_frame, textvariable=self.day_var, width=6,
+        self.day_combo = ttk.Combobox(input_absence_frame, textvariable=self.day_var, width=8,
                                       values=[f"Tag {i + 1}" for i in range(DAYS_IN_PLANNING)])
-        self.day_combo.grid(row=0, column=3, padx=3)
+        self.day_combo.grid(row=0, column=3, padx=5)
 
         btn_frame = ttk.Frame(absence_frame)
-        btn_frame.pack(fill="x", pady=(0, 5))
-        ttk.Button(btn_frame, text="+", command=self.add_absence, width=3).pack(side="left", padx=1)
-        ttk.Button(btn_frame, text="-", command=self.remove_absence, width=3).pack(side="left", padx=1)
-        ttk.Button(btn_frame, text="Laden", command=self.update_employee_list, width=6).pack(side="left", padx=1)
+        btn_frame.pack(fill="x", pady=(0, 10))
+        ttk.Button(btn_frame, text="+ Hinzufügen", command=self.add_absence, width=12).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="- Entfernen", command=self.remove_absence, width=12).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Laden", command=self.update_employee_list, width=8).pack(side="left", padx=2)
 
         absence_columns = ("Tag", "MA")
         self.absence_tree = ttk.Treeview(absence_frame, columns=absence_columns, show="headings",
-                                         height=8, style="Modern.Treeview")
+                                         height=16, style="Modern.Treeview")
         self.absence_tree.heading("Tag", text="Tag")
         self.absence_tree.heading("MA", text="MA")
-        self.absence_tree.column("Tag", width=50, anchor="center")
-        self.absence_tree.column("MA", width=50, anchor="center")
+        self.absence_tree.column("Tag", width=70, anchor="center")
+        self.absence_tree.column("MA", width=70, anchor="center")
 
         scrollbar_absence = ttk.Scrollbar(absence_frame, orient="vertical", command=self.absence_tree.yview)
         self.absence_tree.configure(yscrollcommand=scrollbar_absence.set)
         self.absence_tree.pack(side="left", fill="both", expand=True)
         scrollbar_absence.pack(side="right", fill="y")
 
-        # --- Feiertage (unten) ---
-        holiday_frame = ttk.LabelFrame(right_container, text=" Feiertage ", padding=5)
-        holiday_frame.pack(fill="both", expand=True)
-
-        input_holiday_frame = ttk.Frame(holiday_frame)
-        input_holiday_frame.pack(fill="x", pady=(0, 5))
-
-        ttk.Label(input_holiday_frame, text="Tag:").grid(row=0, column=0, sticky="w")
-        self.holiday_day_var = tk.StringVar()
-        self.holiday_day_combo = ttk.Combobox(input_holiday_frame, textvariable=self.holiday_day_var, width=6,
-                                              values=[f"Tag {i + 1}" for i in range(DAYS_IN_PLANNING)])
-        self.holiday_day_combo.grid(row=0, column=1, padx=3)
-
-        ttk.Label(input_holiday_frame, text="MA:").grid(row=0, column=2, sticky="w")
-        self.holiday_employee_var = tk.StringVar()
-        self.holiday_employee_combo = ttk.Combobox(input_holiday_frame, textvariable=self.holiday_employee_var, width=6)
-        self.holiday_employee_combo.grid(row=0, column=3, padx=3)
-
-        input_holiday_frame2 = ttk.Frame(holiday_frame)
-        input_holiday_frame2.pack(fill="x", pady=(0, 5))
-
-        ttk.Label(input_holiday_frame2, text="Name:").grid(row=0, column=0, sticky="w")
-        self.holiday_name_var = tk.StringVar()
-        self.holiday_name_entry = ttk.Entry(input_holiday_frame2, textvariable=self.holiday_name_var, width=15)
-        self.holiday_name_entry.grid(row=0, column=1, padx=3, columnspan=3, sticky="ew")
-
-        btn_holiday_frame = ttk.Frame(holiday_frame)
-        btn_holiday_frame.pack(fill="x", pady=(0, 5))
-        ttk.Button(btn_holiday_frame, text="+", command=self.add_holiday, width=3).pack(side="left", padx=1)
-        ttk.Button(btn_holiday_frame, text="-", command=self.remove_holiday, width=3).pack(side="left", padx=1)
-
-        holiday_columns = ("Tag", "MA", "Name")
-        self.holiday_tree = ttk.Treeview(holiday_frame, columns=holiday_columns, show="headings",
-                                         height=6, style="Modern.Treeview")
-        self.holiday_tree.heading("Tag", text="Tag")
-        self.holiday_tree.heading("MA", text="MA")
-        self.holiday_tree.heading("Name", text="Name")
-        self.holiday_tree.column("Tag", width=40, anchor="center")
-        self.holiday_tree.column("MA", width=40, anchor="center")
-        self.holiday_tree.column("Name", width=80, anchor="w")
-
-        scrollbar_holiday = ttk.Scrollbar(holiday_frame, orient="vertical", command=self.holiday_tree.yview)
-        self.holiday_tree.configure(yscrollcommand=scrollbar_holiday.set)
-        self.holiday_tree.pack(side="left", fill="both", expand=True)
-        scrollbar_holiday.pack(side="right", fill="y")
-
-        main_paned.add(right_container, weight=1)
+        main_paned.add(absence_frame, weight=1)
 
     def _configure_modern_styles(self) -> None:
         """Konfiguriert moderne ttk Styles"""
@@ -456,39 +453,64 @@ Hinweise zur Pool-Konfiguration:
             for employee in sorted(self.absences[day_nr]):
                 self.absence_tree.insert("", tk.END, values=(f"Tag {day_nr + 1}", employee))
 
-    # -------------------- Feiertage --------------------
+    # -------------------- Feiertage (dauerhaft gespeichert) --------------------
 
     def add_holiday(self) -> None:
-        """Fügt einen Feiertag mit Notdienst-Mitarbeiter hinzu"""
-        day_str = self.holiday_day_var.get().strip()
-        employee = self.holiday_employee_var.get().strip()
+        """Fügt einen Feiertag hinzu und speichert in Config"""
+        date_str = self.holiday_date_var.get().strip()
         name = self.holiday_name_var.get().strip()
+        employee = self.holiday_employee_var.get().strip()
 
-        if not day_str or not employee:
-            messagebox.showwarning("Warnung", "Bitte Tag und Mitarbeiter auswählen!")
+        if not date_str or not name:
+            messagebox.showwarning("Warnung", "Bitte Datum und Name eingeben!")
             return
 
+        # Datum validieren (TT.MM Format)
         try:
-            day_nr = int(day_str.split()[1]) - 1
-            if not (0 <= day_nr < DAYS_IN_PLANNING):
-                raise ValueError("Tag außerhalb des gültigen Bereichs")
+            parts = date_str.split(".")
+            if len(parts) != 2:
+                raise ValueError("Format muss TT.MM sein")
+            day, month = int(parts[0]), int(parts[1])
+            if not (1 <= day <= 31 and 1 <= month <= 12):
+                raise ValueError("Ungültiges Datum")
+            date_str = f"{day:02d}.{month:02d}"  # Normalisieren
         except (ValueError, IndexError) as e:
-            messagebox.showerror("Fehler", f"Ungültiger Tag: {e}")
+            messagebox.showerror("Fehler", f"Ungültiges Datum: {e}\nFormat: TT.MM (z.B. 25.12)")
             return
 
-        self.holidays[day_nr] = {
-            "name": name if name else "Feiertag",
+        # Prüfen ob Datum bereits existiert
+        for holiday in self.config["feiertage"]:
+            if holiday["datum"] == date_str:
+                # Update statt neu hinzufügen
+                holiday["name"] = name
+                holiday["mitarbeiter"] = employee
+                self.update_holiday_display()
+                self.save_config()
+                self._clear_holiday_inputs()
+                return
+
+        # Neuen Feiertag hinzufügen
+        self.config["feiertage"].append({
+            "datum": date_str,
+            "name": name,
             "mitarbeiter": employee
-        }
+        })
+
+        # Nach Datum sortieren
+        self.config["feiertage"].sort(key=lambda x: (int(x["datum"].split(".")[1]), int(x["datum"].split(".")[0])))
 
         self.update_holiday_display()
-        # Felder leeren
-        self.holiday_day_var.set("")
-        self.holiday_employee_var.set("")
+        self.save_config()
+        self._clear_holiday_inputs()
+
+    def _clear_holiday_inputs(self) -> None:
+        """Leert die Feiertags-Eingabefelder"""
+        self.holiday_date_var.set("")
         self.holiday_name_var.set("")
+        self.holiday_employee_var.set("")
 
     def remove_holiday(self) -> None:
-        """Entfernt einen Feiertag"""
+        """Entfernt einen Feiertag und speichert Config"""
         selected = self.holiday_tree.selection()
         if not selected:
             messagebox.showwarning("Warnung", "Bitte einen Eintrag auswählen!")
@@ -496,39 +518,45 @@ Hinweise zur Pool-Konfiguration:
 
         for item in selected:
             values = self.holiday_tree.item(item, 'values')
-            day_str = values[0]
-            try:
-                day_nr = int(day_str.split()[1]) - 1
-                if day_nr in self.holidays:
-                    del self.holidays[day_nr]
-            except (ValueError, IndexError):
-                continue
+            date_str = values[0]
+            # Feiertag aus Liste entfernen
+            self.config["feiertage"] = [
+                h for h in self.config["feiertage"] if h["datum"] != date_str
+            ]
 
         self.update_holiday_display()
+        self.save_config()
 
     def update_holiday_display(self) -> None:
-        """Aktualisiert die Anzeige der Feiertage"""
+        """Aktualisiert die Anzeige der Feiertage aus Config"""
         for item in self.holiday_tree.get_children():
             self.holiday_tree.delete(item)
 
-        for day_nr in sorted(self.holidays.keys()):
-            holiday = self.holidays[day_nr]
+        for holiday in self.config.get("feiertage", []):
             self.holiday_tree.insert("", tk.END, values=(
-                f"Tag {day_nr + 1}",
-                holiday["mitarbeiter"],
-                holiday["name"]
+                holiday["datum"],
+                holiday["name"],
+                holiday.get("mitarbeiter", "")
             ))
 
-    def _get_holiday_employees_for_week(self, tag_nr: int) -> List[str]:
+    def _get_holiday_employees_for_week(self, tag_nr: int, start_date: datetime) -> List[str]:
         """Gibt Mitarbeiter zurück, die in der Woche des Tags Feiertags-Notdienst haben"""
         # Woche berechnen (0-5 = Woche 1, 6-11 = Woche 2)
         week_start = (tag_nr // DAYS_PER_WEEK) * DAYS_PER_WEEK
         week_end = week_start + DAYS_PER_WEEK
 
         holiday_employees = []
-        for day in range(week_start, week_end):
-            if day in self.holidays:
-                holiday_employees.append(self.holidays[day]["mitarbeiter"])
+
+        # Alle Tage der Woche durchgehen
+        for day_in_week in range(week_start, week_end):
+            week_number = day_in_week // DAYS_PER_WEEK
+            current_date = start_date + timedelta(days=day_in_week + week_number)
+            date_str = current_date.strftime("%d.%m")
+
+            # Prüfen ob dieser Tag ein Feiertag ist
+            for holiday in self.config.get("feiertage", []):
+                if holiday["datum"] == date_str and holiday.get("mitarbeiter"):
+                    holiday_employees.append(holiday["mitarbeiter"])
 
         return holiday_employees
 
@@ -603,7 +631,7 @@ Hinweise zur Pool-Konfiguration:
 
         return pool_positions
 
-    def _get_absent_for_day(self, tag_nr: int, is_friday: bool) -> List[str]:
+    def _get_absent_for_day(self, tag_nr: int, is_friday: bool, start_date: datetime) -> List[str]:
         """Gibt Liste der abwesenden Mitarbeiter für einen Tag zurück"""
         absent_today = self.absences.get(tag_nr, []).copy()
 
@@ -612,7 +640,7 @@ Hinweise zur Pool-Konfiguration:
             absent_today = list(set(absent_today + self.config["pool_freitag_abwesend"]))
 
         # Feiertags-Mitarbeiter für diese Woche ausschließen
-        holiday_employees = self._get_holiday_employees_for_week(tag_nr)
+        holiday_employees = self._get_holiday_employees_for_week(tag_nr, start_date)
         absent_today = list(set(absent_today + holiday_employees))
 
         return absent_today
@@ -654,7 +682,7 @@ Hinweise zur Pool-Konfiguration:
                 is_saturday = weekday_in_week == 5
                 weekday_german = WEEKDAY_NAMES[weekday_in_week]
 
-                absent_today = self._get_absent_for_day(tag_nr, is_friday)
+                absent_today = self._get_absent_for_day(tag_nr, is_friday, start_date)
 
                 # Samstag: keine Schichten
                 if is_saturday:
