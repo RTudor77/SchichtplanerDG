@@ -416,8 +416,7 @@ class ShiftPlanner:
             current_day = day_nr + 1
             if current_day < DAYS_IN_PLANNING:
                 self.day_var.set(f"Tag {current_day + 1}")
-            # Eingabefeld leeren für schnellere Eingabe
-            self.employee_var.set("")
+            # MA bleibt stehen für schnellere Mehrfacheingabe
 
     def remove_absence(self) -> None:
         """Entfernt eine Abwesenheit"""
