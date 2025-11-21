@@ -181,109 +181,147 @@ Hinweise zur Pool-Konfiguration:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar_pool.pack(side="right", fill="y")
 
-    def create_shift_planning_tab(self, notebook):
-        """Erstellt Tab für Schichtplanung"""
-        planning_frame = ttk.Frame(notebook)
+    def create_shift_planning_tab(self, notebook: ttk.Notebook) -> None:
+        """Erstellt Tab für Schichtplanung - MODERNES LAYOUT"""
+        planning_frame = ttk.Frame(notebook, padding=10)
         notebook.add(planning_frame, text="Schichtplanung")
 
-        # Oben: linke & rechte Spalte (Bedienelemente), unten: Ergebnisliste
-        top_frame = ttk.Frame(planning_frame)
-        top_frame.pack(side="top", fill="x", expand=False)
+        # Modernes Styling konfigurieren
+        self._configure_modern_styles()
 
-        left_frame = ttk.Frame(top_frame)
-        left_frame.pack(side="left", fill="y", padx=(0, 10))
+        # === OBERER BEREICH: Grundeinstellungen (kompakt) ===
+        settings_frame = ttk.LabelFrame(planning_frame, text=" Grundeinstellungen ", padding=10)
+        settings_frame.pack(fill="x", pady=(0, 10))
 
-        right_frame = ttk.Frame(top_frame)
-        right_frame.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        # Eingabefelder in einer Zeile
+        input_frame = ttk.Frame(settings_frame)
+        input_frame.pack(fill="x")
 
-        # Linke Seite – Grundeinstellungen
-        ttk.Label(left_frame, text="Grundeinstellungen", font=('TkDefaultFont', 11, 'bold')).grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
+        # Startdatum
+        ttk.Label(input_frame, text="Startdatum:").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.start_date_entry = ttk.Entry(input_frame, width=14)
+        self.start_date_entry.grid(row=0, column=1, padx=(0, 15))
 
-        ttk.Label(left_frame, text="Startdatum (Montag, TT.MM.YYYY):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.start_date_entry = tk.Entry(left_frame, width=20)
-        self.start_date_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        # 1. Tag VM
+        ttk.Label(input_frame, text="1. Tag VM:").grid(row=0, column=2, sticky="w", padx=(0, 5))
+        self.first_vm_entry = ttk.Entry(input_frame, width=8)
+        self.first_vm_entry.grid(row=0, column=3, padx=(0, 15))
 
-        ttk.Label(left_frame, text="1. Tag Vormittag:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        self.first_vm_entry = tk.Entry(left_frame, width=20)
-        self.first_vm_entry.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        # 1. Tag NM
+        ttk.Label(input_frame, text="1. Tag NM:").grid(row=0, column=4, sticky="w", padx=(0, 5))
+        self.first_nm_entry = ttk.Entry(input_frame, width=8)
+        self.first_nm_entry.grid(row=0, column=5, padx=(0, 15))
 
-        ttk.Label(left_frame, text="1. Tag Nachmittag:").grid(row=3, column=0, sticky="w", padx=5, pady=5)
-        self.first_nm_entry = tk.Entry(left_frame, width=20)
-        self.first_nm_entry.grid(row=3, column=1, padx=5, pady=5, sticky="w")
+        # 1. Tag Support
+        ttk.Label(input_frame, text="Support:").grid(row=0, column=6, sticky="w", padx=(0, 5))
+        self.first_support_entry = ttk.Entry(input_frame, width=8)
+        self.first_support_entry.grid(row=0, column=7, padx=(0, 20))
 
-        ttk.Label(left_frame, text="1. Tag Support:").grid(row=4, column=0, sticky="w", padx=5, pady=5)
-        self.first_support_entry = tk.Entry(left_frame, width=20)
-        self.first_support_entry.grid(row=4, column=1, padx=5, pady=5, sticky="w")
+        # Buttons
+        ttk.Button(input_frame, text="Planung erstellen", command=self.create_planning,
+                  style="Accent.TButton").grid(row=0, column=8, padx=5)
+        ttk.Button(input_frame, text="Excel Export", command=self.export_excel).grid(row=0, column=9, padx=5)
 
-        button_frame = ttk.Frame(left_frame)
-        button_frame.grid(row=5, column=0, columnspan=2, pady=20)
-        ttk.Button(button_frame, text="Planung erstellen", command=self.create_planning).pack(side="left", padx=5)
-        ttk.Button(button_frame, text="Excel exportieren", command=self.export_excel).pack(side="left", padx=5)
+        # === HAUPTBEREICH: Planungsergebnis (links) + Abwesenheiten (rechts) ===
+        main_paned = ttk.PanedWindow(planning_frame, orient="horizontal")
+        main_paned.pack(fill="both", expand=True)
 
-        # Rechte Seite – Abwesenheiten
-        ttk.Label(right_frame, text="Abwesenheiten verwalten", font=('TkDefaultFont', 11, 'bold')).grid(row=0, column=0, columnspan=3, pady=(0, 10), sticky="w")
+        # === LINKER BEREICH: Planungsergebnis (größer) ===
+        result_frame = ttk.LabelFrame(main_paned, text=" Planungsergebnis ", padding=10)
 
-        ttk.Label(right_frame, text="Mitarbeiter:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        self.employee_var = tk.StringVar()
-        self.employee_combo = ttk.Combobox(right_frame, textvariable=self.employee_var, width=18)
-        self.employee_combo.grid(row=1, column=1, padx=5, pady=2, sticky="w")
-        ttk.Label(right_frame, text="(Mehrere: IL,AN,RR)", font=('TkDefaultFont', 8), foreground='gray').grid(row=1, column=2, sticky="w", padx=2, pady=2)
+        columns = ("Datum", "Tag", "VM", "NM", "Support")
+        self.result_tree = ttk.Treeview(result_frame, columns=columns, show="headings",
+                                        height=20, style="Modern.Treeview")
 
-        ttk.Label(right_frame, text="Tag:").grid(row=2, column=0, sticky="w", padx=5, pady=2)
-        self.day_var = tk.StringVar()
-        # 12 Tage (Mo-Sa, Mo-Sa)
-        self.day_combo = ttk.Combobox(right_frame, textvariable=self.day_var, width=18, values=[f"Tag {i + 1}" for i in range(12)])
-        self.day_combo.grid(row=2, column=1, padx=5, pady=2, sticky="w")
-
-        ttk.Button(right_frame, text="➕ Hinzufügen", command=self.add_absence).grid(row=3, column=0, padx=5, pady=5, sticky="w")
-        ttk.Button(right_frame, text="🗑️ Entfernen", command=self.remove_absence).grid(row=3, column=1, padx=5, pady=5, sticky="w")
-        ttk.Button(right_frame, text="Pools laden", command=self.update_employee_list).grid(row=3, column=2, padx=5, pady=5, sticky="w")
-
-        ttk.Label(right_frame, text="Eingetragene Abwesenheiten:").grid(row=4, column=0, columnspan=3, sticky="w", padx=5, pady=(15, 5))
-
-        # Abwesenheitenliste: mindestens 26 Zeilen
-        absence_columns = ("Tag", "Mitarbeiter")
-        self.absence_tree = ttk.Treeview(right_frame, columns=absence_columns, show="headings", height=26)
-        self.absence_tree.heading("Tag", text="Tag")
-        self.absence_tree.heading("Mitarbeiter", text="Mitarbeiter")
-        self.absence_tree.column("Tag", width=90, stretch=False)
-        self.absence_tree.column("Mitarbeiter", width=140, stretch=True)
-        self.absence_tree.grid(row=5, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
-
-        absence_scrollbar = ttk.Scrollbar(right_frame, orient="vertical", command=self.absence_tree.yview)
-        absence_scrollbar.grid(row=5, column=3, sticky="ns", pady=5)
-        self.absence_tree.configure(yscrollcommand=absence_scrollbar.set)
-
-        right_frame.grid_rowconfigure(5, weight=1)
-        right_frame.grid_columnconfigure(2, weight=1)
-
-        # Ergebnisbereich
-        result_frame = ttk.Frame(planning_frame)
-        result_frame.pack(side="top", fill="both", expand=True, pady=(20, 0))
-
-        ttk.Label(result_frame, text="Planungsergebnis:", font=('TkDefaultFont', 11, 'bold')).pack(anchor="w", pady=(0, 5))
-
-        # Spaltenreihenfolge: Datum, Wochentag, Vormittag, Nachmittag, Support
-        columns = ("Datum", "Wochentag", "Vormittag", "Nachmittag", "Support")
-        self.result_tree = ttk.Treeview(result_frame, columns=columns, show="headings", height=12)
-
-        # Spalten-Konfiguration (DRY)
+        # Spalten-Konfiguration (kompakter)
         column_config = {
-            "Datum": (120, False),
-            "Wochentag": (160, False),
-            "Vormittag": (180, True),
-            "Nachmittag": (180, True),
-            "Support": (180, True)
+            "Datum": (85, "center"),
+            "Tag": (80, "center"),
+            "VM": (60, "center"),
+            "NM": (60, "center"),
+            "Support": (60, "center")
         }
-        for col_name, (width, stretch) in column_config.items():
+        for col_name, (width, anchor) in column_config.items():
             self.result_tree.heading(col_name, text=col_name)
-            self.result_tree.column(col_name, width=width, stretch=stretch)
+            self.result_tree.column(col_name, width=width, minwidth=50, anchor=anchor)
+
+        scrollbar_result = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_tree.yview)
+        self.result_tree.configure(yscrollcommand=scrollbar_result.set)
 
         self.result_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_result.pack(side="right", fill="y")
 
-        scrollbar_y = ttk.Scrollbar(result_frame, orient="vertical", command=self.result_tree.yview)
-        scrollbar_y.pack(side="right", fill="y")
-        self.result_tree.configure(yscrollcommand=scrollbar_y.set)
+        main_paned.add(result_frame, weight=3)
+
+        # === RECHTER BEREICH: Abwesenheiten (schmaler) ===
+        absence_frame = ttk.LabelFrame(main_paned, text=" Abwesenheiten ", padding=10)
+
+        # Eingabe-Bereich
+        input_absence_frame = ttk.Frame(absence_frame)
+        input_absence_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(input_absence_frame, text="MA:").grid(row=0, column=0, sticky="w")
+        self.employee_var = tk.StringVar()
+        self.employee_combo = ttk.Combobox(input_absence_frame, textvariable=self.employee_var, width=10)
+        self.employee_combo.grid(row=0, column=1, padx=5)
+
+        ttk.Label(input_absence_frame, text="Tag:").grid(row=0, column=2, sticky="w")
+        self.day_var = tk.StringVar()
+        self.day_combo = ttk.Combobox(input_absence_frame, textvariable=self.day_var, width=8,
+                                      values=[f"Tag {i + 1}" for i in range(DAYS_IN_PLANNING)])
+        self.day_combo.grid(row=0, column=3, padx=5)
+
+        # Buttons kompakt
+        btn_frame = ttk.Frame(absence_frame)
+        btn_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Button(btn_frame, text="+ Hinzufügen", command=self.add_absence, width=12).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="- Entfernen", command=self.remove_absence, width=12).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Laden", command=self.update_employee_list, width=8).pack(side="left", padx=2)
+
+        # Abwesenheiten-Liste (kompakt)
+        absence_columns = ("Tag", "MA")
+        self.absence_tree = ttk.Treeview(absence_frame, columns=absence_columns, show="headings",
+                                         height=16, style="Modern.Treeview")
+        self.absence_tree.heading("Tag", text="Tag")
+        self.absence_tree.heading("MA", text="MA")
+        self.absence_tree.column("Tag", width=60, anchor="center")
+        self.absence_tree.column("MA", width=60, anchor="center")
+
+        scrollbar_absence = ttk.Scrollbar(absence_frame, orient="vertical", command=self.absence_tree.yview)
+        self.absence_tree.configure(yscrollcommand=scrollbar_absence.set)
+
+        self.absence_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_absence.pack(side="right", fill="y")
+
+        main_paned.add(absence_frame, weight=1)
+
+    def _configure_modern_styles(self) -> None:
+        """Konfiguriert moderne ttk Styles"""
+        style = ttk.Style()
+
+        # Versuche ein moderneres Theme zu verwenden
+        available_themes = style.theme_names()
+        if 'clam' in available_themes:
+            style.theme_use('clam')
+        elif 'vista' in available_themes:
+            style.theme_use('vista')
+
+        # Moderne Treeview-Styles
+        style.configure("Modern.Treeview",
+                       rowheight=25,
+                       font=('Segoe UI', 9))
+        style.configure("Modern.Treeview.Heading",
+                       font=('Segoe UI', 9, 'bold'),
+                       padding=5)
+
+        # Accent Button Style
+        style.configure("Accent.TButton",
+                       font=('Segoe UI', 9, 'bold'))
+
+        # LabelFrame Style
+        style.configure("TLabelframe.Label",
+                       font=('Segoe UI', 10, 'bold'))
 
     # -------------------- Abwesenheiten --------------------
 
@@ -572,11 +610,13 @@ Hinweise zur Pool-Konfiguration:
         for item in self.result_tree.get_children():
             self.result_tree.delete(item)
 
-        # Neue Einträge hinzufügen
+        # Neue Einträge hinzufügen (angepasst an neue kompakte Spalten)
         for row in self.planning_result:
+            # Wochentag abkürzen für kompaktere Darstellung
+            tag_kurz = row["Wochentag"][:2] if row["Wochentag"] else ""
             self.result_tree.insert(
                 "", tk.END,
-                values=(row["Datum"], row["Wochentag"], row["Vormittag"],
+                values=(row["Datum"], tag_kurz, row["Vormittag"],
                        row["Nachmittag"], row["Support"])
             )
 
