@@ -37,6 +37,7 @@ class ShiftPlanner:
             "pool_vm_support": [],         # Vormittag - Support für Pool B
             "pool_nm_alle": [],            # Nachmittag - können alles
             "pool_freitag_abwesend": [],   # Freitags nicht verfügbar
+            "pool_mo_mi_abwesend": [],     # Montag/Mittwoch nicht verfügbar
             "feiertage": []                # [{datum: "25.12", name: "1. Weihnachtstag", mitarbeiter: "XX"}]
         }
 
@@ -160,17 +161,21 @@ class ShiftPlanner:
             left_frame, 4, "Pool E - Freitags NICHT verfügbar:", "pool_freitag_abwesend",
             font=('TkDefaultFont', 9, 'bold'), foreground='orange'
         )
+        self.pool_mo_mi_abwesend_entry = self._create_pool_entry(
+            left_frame, 5, "Pool F - Mo/Mi NICHT verfügbar:", "pool_mo_mi_abwesend",
+            font=('TkDefaultFont', 9, 'bold'), foreground='#e67300'
+        )
 
         # Speichern Button
         ttk.Button(left_frame, text="Pools speichern", command=self.save_pools).grid(
-            row=5, column=1, pady=15, sticky="e"
+            row=6, column=1, pady=15, sticky="e"
         )
 
         info_text = """Hinweise:
 • Mitarbeiter mit Komma trennen (z.B. RR,AN,MH)
 • Reihenfolge wird bei der Planung berücksichtigt"""
         ttk.Label(left_frame, text=info_text, justify="left", font=('TkDefaultFont', 8),
-                 foreground='gray').grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky="w")
+                 foreground='gray').grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky="w")
 
         main_container.add(left_frame, weight=2)
 
@@ -567,7 +572,8 @@ class ShiftPlanner:
                 "pool_vm_teilweise": self.pool_vm_teilweise_entry,
                 "pool_vm_support": self.pool_vm_support_entry,
                 "pool_nm_alle": self.pool_nm_alle_entry,
-                "pool_freitag_abwesend": self.pool_freitag_abwesend_entry
+                "pool_freitag_abwesend": self.pool_freitag_abwesend_entry,
+                "pool_mo_mi_abwesend": self.pool_mo_mi_abwesend_entry
             }
 
             for pool_key, entry_widget in pool_entries.items():
@@ -630,13 +636,17 @@ class ShiftPlanner:
 
         return pool_positions
 
-    def _get_absent_for_day(self, tag_nr: int, is_friday: bool, start_date: datetime) -> List[str]:
+    def _get_absent_for_day(self, tag_nr: int, is_friday: bool, start_date: datetime, is_monday: bool = False, is_wednesday: bool = False) -> List[str]:
         """Gibt Liste der abwesenden Mitarbeiter für einen Tag zurück"""
         absent_today = self.absences.get(tag_nr, []).copy()
 
         if is_friday:
             # Freitags zusätzlich die generellen "Freitag nicht verfügbar"
             absent_today = list(set(absent_today + self.config["pool_freitag_abwesend"]))
+
+        if is_monday or is_wednesday:
+            # Montag/Mittwoch zusätzlich die generellen "Mo/Mi nicht verfügbar"
+            absent_today = list(set(absent_today + self.config.get("pool_mo_mi_abwesend", [])))
 
         # Feiertags-Mitarbeiter für diese Woche ausschließen
         holiday_employees = self._get_holiday_employees_for_week(tag_nr, start_date)
@@ -677,11 +687,13 @@ class ShiftPlanner:
                 week_number = tag_nr // DAYS_PER_WEEK
                 current_date = start_date + timedelta(days=tag_nr + week_number)
 
+                is_monday = weekday_in_week == 0
+                is_wednesday = weekday_in_week == 2
                 is_friday = weekday_in_week == 4
                 is_saturday = weekday_in_week == 5
                 weekday_german = WEEKDAY_NAMES[weekday_in_week]
 
-                absent_today = self._get_absent_for_day(tag_nr, is_friday, start_date)
+                absent_today = self._get_absent_for_day(tag_nr, is_friday, start_date, is_monday, is_wednesday)
 
                 # Samstag: keine Schichten
                 if is_saturday:
