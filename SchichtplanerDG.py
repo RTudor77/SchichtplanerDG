@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, scrolledtext
 import json
 import pandas as pd
 from datetime import datetime, timedelta
@@ -157,6 +157,8 @@ class ShiftPlanner:
         self.create_shift_planning_tab(notebook)
         # Tab 3: Auswertung
         self.create_evaluation_tab(notebook)
+        # Tab 4: Hilfe
+        self.create_help_tab(notebook)
 
     def _create_pool_entry(self, parent: ttk.Frame, row: int, label_text: str,
                           config_key: str, **label_kwargs) -> tk.Entry:
@@ -477,6 +479,75 @@ class ShiftPlanner:
         # Initial aktualisieren
         self.root.after(200, self.update_evaluation_display)
 
+    def create_help_tab(self, notebook: ttk.Notebook) -> None:
+        """Erstellt Tab für Hilfe und Anleitung"""
+        help_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(help_frame, text="Hilfe")
+
+        text_area = scrolledtext.ScrolledText(help_frame, wrap=tk.WORD, width=100, height=30,
+                                              font=('Segoe UI', 10))
+        text_area.pack(fill="both", expand=True)
+
+        # Tags für Formatierung
+        text_area.tag_config("h1", font=('Segoe UI', 14, 'bold'), foreground="#2c3e50", spacing3=10)
+        text_area.tag_config("h2", font=('Segoe UI', 12, 'bold'), foreground="#34495e", spacing3=5)
+        text_area.tag_config("bold", font=('Segoe UI', 10, 'bold'))
+        text_area.tag_config("italic", font=('Segoe UI', 10, 'italic'))
+
+        help_content = [
+            ("Anleitung & Funktionsweise", "h1"),
+            
+            ("\n1. Konfiguration (Pools)", "h2"),
+            ("Zuerst müssen die Mitarbeiter in die entsprechenden Pools eingetragen werden (Tab 'Pool-Konfiguration').\n"
+             "• ", ""), ("Pool A (VM Alle):", "bold"), (" Mitarbeiter, die vormittags alles machen können.\n"
+             "• ", ""), ("Pool B (VM Teilweise):", "bold"), (" Mitarbeiter, die vormittags Unterstützung brauchen.\n"
+             "• ", ""), ("Pool C (VM Support):", "bold"), (" Mitarbeiter, die Pool B unterstützen können.\n"
+             "• ", ""), ("Pool D (NM Alle):", "bold"), (" Mitarbeiter für den Nachmittag.\n"
+             "• ", ""), ("Pool E:", "bold"), (" Mitarbeiter, die Freitags nie verfügbar sind.\n"
+             "• ", ""), ("Pool F:", "bold"), (" Mitarbeiter, die Mo/Mi nie verfügbar sind.\n"
+             "Die Reihenfolge der Eingabe bestimmt die initiale Rotationsreihenfolge.", ""),
+
+            ("\n2. Planung erstellen", "h2"),
+            ("Im Tab 'Schichtplanung':\n"
+             "1. Startdatum (Montag) eingeben.\n"
+             "2. Die Mitarbeiter für den ", ""), ("aller ersten Tag", "bold"), (" manuell festlegen (als Startpunkt).\n"
+             "3. Auf 'Planung erstellen' klicken.\n"
+             "Das System berechnet nun automatisch die folgenden 12 Tage (2 Wochen).", ""),
+
+            ("\n3. Automatische Auswahlkriterien", "h2"),
+            ("Das Programm entscheidet nach folgenden Regeln, wer wann eingeteilt wird:\n", ""),
+            
+            ("A) Rotation (Gerechtigkeit)", "bold"),
+            ("\nDas System merkt sich für jeden Pool die letzte Position. Beim nächsten Tag wird einfach der nächste Mitarbeiter in der Liste gewählt. "
+             "Dadurch kommt jeder gleich oft dran (Reihum-Prinzip).\n", ""),
+
+            ("B) Abwesenheiten (Priorität 1)", "bold"),
+            ("\nEin Mitarbeiter wird ÜBERSPRUNGEN, wenn:\n"
+             "• Er im Tab 'Schichtplanung' rechts unter 'Abwesenheiten' eingetragen ist.\n"
+             "• Er im Pool 'Freitag abwesend' ist und der Tag ein Freitag ist.\n"
+             "• Er im Pool 'Mo/Mi abwesend' ist und der Tag Mo oder Mi ist.\n"
+             "• Er für die aktuelle Woche als Feiertags-Notdienst eingeteilt ist.\n", ""),
+
+            ("C) Ruhezeiten (Priorität 2)", "bold"),
+            ("\n• Wer am Vortag Nachmittagsschicht hatte, wird am nächsten Tag NICHT für den Vormittag eingeteilt.\n", ""),
+
+            ("D) Support-Logik (Vormittag)", "bold"),
+            ("\n• Wird ein Mitarbeiter aus ", ""), ("Pool B (Teilweise)", "bold"), (" gewählt, MUSS zwingend ein Support-Mitarbeiter aus ", ""), ("Pool C", "bold"), (" dazu kommen.\n"
+             "• Ist der gewählte Mitarbeiter aus Pool A (""Vollprofi""), wird kein Support benötigt.\n", ""),
+
+            ("\n4. Feiertage", "h2"),
+            ("Feiertage werden im ersten Tab definiert. Für einen Feiertag wird ein EINER Mitarbeiter festgelegt, "
+             "der dann den ", ""), ("kompletten Tag", "italic"), (" übernimmt. Dieser Mitarbeiter wird für den Rest der Woche aus der regulären Rotation genommen, damit er nicht überlastet wird.", ""),
+             
+            ("\n5. Auswertung", "h2"),
+            ("Fertige Pläne können gespeichert werden. Im Tab 'Auswertung' sehen Sie dann eine Statistik, wer wie oft welche Schicht hatte.", "")
+        ]
+
+        for text, tag in help_content:
+            text_area.insert(tk.END, text, tag)
+        
+        text_area.configure(state='disabled')  # Schreibgeschützt
+
     def save_current_plan(self) -> None:
         """Speichert den aktuellen Plan in die Historie"""
         if not self.planning_result:
@@ -521,9 +592,18 @@ class ShiftPlanner:
         for item in self.stats_tree.get_children():
             self.stats_tree.delete(item)
 
-        # Statistik anzeigen
-        for ma, counts in sorted(stats.items()):
+        # Statistik sortieren: Nach Gesamt (absteigend), dann Name (aufsteigend)
+        # Wir erstellen erst eine Liste mit (Name, Counts, Total)
+        stats_list = []
+        for ma, counts in stats.items():
             total = counts["VM"] + counts["NM"] + counts["Support"]
+            stats_list.append((ma, counts, total))
+
+        # Sortieren: -total für absteigend, name für aufsteigend
+        stats_list.sort(key=lambda x: (-x[2], x[0]))
+
+        # Statistik anzeigen
+        for ma, counts, total in stats_list:
             self.stats_tree.insert("", tk.END, values=(
                 ma, counts["VM"], counts["NM"], counts["Support"], total
             ))
