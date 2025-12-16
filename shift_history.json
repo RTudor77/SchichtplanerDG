@@ -1,0 +1,97 @@
+{
+  "plans": [
+    {
+      "start_date": "05.01.2026",
+      "end_date": "17.01.2026",
+      "saved_at": "15.12.2025 13:09",
+      "entries": [
+        {
+          "Datum": "05.01.2026",
+          "Wochentag": "Montag",
+          "Vormittag": "RR",
+          "Nachmittag": "IL",
+          "Support": "FA"
+        },
+        {
+          "Datum": "06.01.2026",
+          "Wochentag": "Dienstag",
+          "Vormittag": "RR",
+          "Nachmittag": "RR",
+          "Support": "RR"
+        },
+        {
+          "Datum": "07.01.2026",
+          "Wochentag": "Mittwoch",
+          "Vormittag": "IL",
+          "Nachmittag": "FA",
+          "Support": ""
+        },
+        {
+          "Datum": "08.01.2026",
+          "Wochentag": "Donnerstag",
+          "Vormittag": "MH",
+          "Nachmittag": "ES",
+          "Support": "JB"
+        },
+        {
+          "Datum": "09.01.2026",
+          "Wochentag": "Freitag",
+          "Vormittag": "RI",
+          "Nachmittag": "JB",
+          "Support": "AN"
+        },
+        {
+          "Datum": "10.01.2026",
+          "Wochentag": "Samstag",
+          "Vormittag": "",
+          "Nachmittag": "",
+          "Support": ""
+        },
+        {
+          "Datum": "12.01.2026",
+          "Wochentag": "Montag",
+          "Vormittag": "TR",
+          "Nachmittag": "AN",
+          "Support": ""
+        },
+        {
+          "Datum": "13.01.2026",
+          "Wochentag": "Dienstag",
+          "Vormittag": "JB",
+          "Nachmittag": "TR",
+          "Support": ""
+        },
+        {
+          "Datum": "14.01.2026",
+          "Wochentag": "Mittwoch",
+          "Vormittag": "ES",
+          "Nachmittag": "RI",
+          "Support": "IL"
+        },
+        {
+          "Datum": "15.01.2026",
+          "Wochentag": "Donnerstag",
+          "Vormittag": "FA",
+          "Nachmittag": "MH",
+          "Support": ""
+        },
+        {
+          "Datum": "16.01.2026",
+          "Wochentag": "Freitag",
+          "Vormittag": "RR",
+          "Nachmittag": "CA",
+          "Support": ""
+        },
+        {
+          "Datum": "17.01.2026",
+          "Wochentag": "Samstag",
+          "Vormittag": "",
+          "Nachmittag": "",
+          "Support": ""
+        }
+      ]
+    }
+  ],
+  "filter_from": "",
+  "filter_to": ""
+}

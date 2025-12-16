@@ -31,9 +31,18 @@
     "AN",
     "TR",
     "RI",
-    "MH"
+    "MH",
+    "CA"
   ],
-  "pool_freitag_abwesend": [
-    "ES"
+  "pool_freitag_abwesend": [],
+  "pool_mo_mi_abwesend": [
+    "CA"
+  ],
+  "feiertage": [
+    {
+      "datum": "06.01",
+      "name": "HLG",
+      "mitarbeiter": "RR"
+    }
   ]
 }

@@ -13,6 +13,7 @@ WEEKDAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Sam
 WINDOW_GEOMETRY = "1400x900"
 MIN_WINDOW_SIZE = (1200, 800)
 CONFIG_FILE = "shift_config.json"
+HISTORY_FILE = "shift_history.json"
 
 # Excel Farbpalette
 COLOR_GREEN = "A9D18E"
@@ -48,8 +49,11 @@ class ShiftPlanner:
         # Interne Zustandsverwaltung
         self.planning_result: List[Dict[str, str]] = []
         self.absences: Dict[int, List[str]] = {}
+        self.saved_plans: List[Dict] = []  # Gespeicherte Pläne für Auswertung
+        self.history_file = HISTORY_FILE
 
         self.load_config()
+        self.load_history()
         self.create_gui()
 
         # Automatisches Laden der Mitarbeiterliste nach GUI-Erstellung
@@ -83,6 +87,37 @@ class ShiftPlanner:
             messagebox.showinfo("Erfolg", "Konfiguration gespeichert!")
         except Exception as e:
             messagebox.showerror("Fehler", f"Fehler beim Speichern: {e}")
+
+    def load_history(self) -> None:
+        """Lädt gespeicherte Pläne aus History-Datei"""
+        try:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.saved_plans = data.get("plans", [])
+                    self._eval_filter_from = data.get("filter_from", "")
+                    self._eval_filter_to = data.get("filter_to", "")
+            else:
+                self.saved_plans = []
+                self._eval_filter_from = ""
+                self._eval_filter_to = ""
+        except Exception:
+            self.saved_plans = []
+            self._eval_filter_from = ""
+            self._eval_filter_to = ""
+
+    def save_history(self) -> None:
+        """Speichert Pläne in History-Datei"""
+        try:
+            data = {
+                "plans": self.saved_plans,
+                "filter_from": getattr(self, '_eval_filter_from', ""),
+                "filter_to": getattr(self, '_eval_filter_to', "")
+            }
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Fehler beim Speichern der Historie: {e}")
 
     def _get_all_employees(self) -> List[str]:
         """Gibt gecachte Liste aller Mitarbeiter zurück (Performance-Optimierung)"""
@@ -120,6 +155,8 @@ class ShiftPlanner:
         self.create_pool_config_tab(notebook)
         # Tab 2: Schichtplanung
         self.create_shift_planning_tab(notebook)
+        # Tab 3: Auswertung
+        self.create_evaluation_tab(notebook)
 
     def _create_pool_entry(self, parent: ttk.Frame, row: int, label_text: str,
                           config_key: str, **label_kwargs) -> tk.Entry:
@@ -275,7 +312,8 @@ class ShiftPlanner:
         # Buttons
         ttk.Button(input_frame, text="Planung erstellen", command=self.create_planning,
                   style="Accent.TButton").grid(row=0, column=8, padx=5)
-        ttk.Button(input_frame, text="Excel Export", command=self.export_excel).grid(row=0, column=9, padx=5)
+        ttk.Button(input_frame, text="Plan speichern", command=self.save_current_plan).grid(row=0, column=9, padx=5)
+        ttk.Button(input_frame, text="Excel Export", command=self.export_excel).grid(row=0, column=10, padx=5)
 
         # === HAUPTBEREICH: Planungsergebnis (links) + Abwesenheiten (rechts) ===
         main_paned = ttk.PanedWindow(planning_frame, orient="horizontal")
@@ -305,6 +343,10 @@ class ShiftPlanner:
 
         self.result_tree.pack(side="left", fill="both", expand=True)
         scrollbar_result.pack(side="right", fill="y")
+
+        # Double-click zum Bearbeiten
+        self.result_tree.bind("<Double-1>", self._on_result_double_click)
+        self._edit_entry = None  # Aktives Eingabefeld
 
         main_paned.add(result_frame, weight=3)
 
@@ -372,6 +414,185 @@ class ShiftPlanner:
         # LabelFrame Style
         style.configure("TLabelframe.Label",
                        font=('Segoe UI', 10, 'bold'))
+
+    def create_evaluation_tab(self, notebook: ttk.Notebook) -> None:
+        """Erstellt Tab für Auswertung der Notdienste"""
+        eval_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(eval_frame, text="Auswertung")
+
+        # === FILTERBEREICH ===
+        filter_frame = ttk.LabelFrame(eval_frame, text=" Datumsfilter ", padding=10)
+        filter_frame.pack(fill="x", pady=(0, 10))
+
+        filter_input = ttk.Frame(filter_frame)
+        filter_input.pack(fill="x")
+
+        ttk.Label(filter_input, text="Von (TT.MM.YYYY):").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.eval_from_var = tk.StringVar(value=getattr(self, '_eval_filter_from', ''))
+        self.eval_from_entry = ttk.Entry(filter_input, textvariable=self.eval_from_var, width=14)
+        self.eval_from_entry.grid(row=0, column=1, padx=(0, 15))
+
+        ttk.Label(filter_input, text="Bis (TT.MM.YYYY):").grid(row=0, column=2, sticky="w", padx=(0, 5))
+        self.eval_to_var = tk.StringVar(value=getattr(self, '_eval_filter_to', ''))
+        self.eval_to_entry = ttk.Entry(filter_input, textvariable=self.eval_to_var, width=14)
+        self.eval_to_entry.grid(row=0, column=3, padx=(0, 15))
+
+        ttk.Button(filter_input, text="Aktualisieren", command=self.update_evaluation_display).grid(row=0, column=4, padx=5)
+        ttk.Button(filter_input, text="Filter speichern", command=self._save_filter).grid(row=0, column=5, padx=5)
+
+        # === STATISTIK-ANZEIGE ===
+        stats_frame = ttk.LabelFrame(eval_frame, text=" Statistik pro Mitarbeiter ", padding=10)
+        stats_frame.pack(fill="both", expand=True)
+
+        columns = ("MA", "VM", "NM", "Support", "Gesamt")
+        self.stats_tree = ttk.Treeview(stats_frame, columns=columns, show="headings",
+                                       height=20, style="Modern.Treeview")
+
+        column_config = {
+            "MA": (100, "center"),
+            "VM": (80, "center"),
+            "NM": (80, "center"),
+            "Support": (80, "center"),
+            "Gesamt": (80, "center")
+        }
+        for col_name, (width, anchor) in column_config.items():
+            self.stats_tree.heading(col_name, text=col_name)
+            self.stats_tree.column(col_name, width=width, minwidth=60, anchor=anchor)
+
+        scrollbar_stats = ttk.Scrollbar(stats_frame, orient="vertical", command=self.stats_tree.yview)
+        self.stats_tree.configure(yscrollcommand=scrollbar_stats.set)
+
+        self.stats_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_stats.pack(side="right", fill="y")
+
+        # === INFO-BEREICH ===
+        info_frame = ttk.Frame(eval_frame)
+        info_frame.pack(fill="x", pady=(10, 0))
+
+        self.stats_info_label = ttk.Label(info_frame, text="Keine Pläne gespeichert.", font=('Segoe UI', 9))
+        self.stats_info_label.pack(side="left")
+
+        ttk.Button(info_frame, text="Alle Pläne löschen", command=self._clear_all_plans).pack(side="right")
+
+        # Initial aktualisieren
+        self.root.after(200, self.update_evaluation_display)
+
+    def save_current_plan(self) -> None:
+        """Speichert den aktuellen Plan in die Historie"""
+        if not self.planning_result:
+            messagebox.showwarning("Warnung", "Keine Planung vorhanden!")
+            return
+
+        # Datum des Plans ermitteln
+        start_date = self.planning_result[0]["Datum"] if self.planning_result else ""
+        end_date = self.planning_result[-1]["Datum"] if self.planning_result else ""
+
+        # Prüfen ob Plan bereits existiert
+        for plan in self.saved_plans:
+            if plan.get("start_date") == start_date and plan.get("end_date") == end_date:
+                if messagebox.askyesno("Plan existiert", "Ein Plan für diesen Zeitraum existiert bereits. Überschreiben?"):
+                    self.saved_plans.remove(plan)
+                    break
+                else:
+                    return
+
+        # Plan speichern
+        new_plan = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "saved_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "entries": [row.copy() for row in self.planning_result]
+        }
+        self.saved_plans.append(new_plan)
+        self.save_history()
+        messagebox.showinfo("Erfolg", f"Plan vom {start_date} bis {end_date} gespeichert!")
+        self.update_evaluation_display()
+
+    def update_evaluation_display(self) -> None:
+        """Aktualisiert die Statistik-Anzeige basierend auf Filter"""
+        # Filter lesen
+        filter_from = self.eval_from_var.get().strip() if hasattr(self, 'eval_from_var') else ""
+        filter_to = self.eval_to_var.get().strip() if hasattr(self, 'eval_to_var') else ""
+
+        # Statistik berechnen
+        stats = self._calculate_statistics(filter_from, filter_to)
+
+        # Treeview leeren
+        for item in self.stats_tree.get_children():
+            self.stats_tree.delete(item)
+
+        # Statistik anzeigen
+        for ma, counts in sorted(stats.items()):
+            total = counts["VM"] + counts["NM"] + counts["Support"]
+            self.stats_tree.insert("", tk.END, values=(
+                ma, counts["VM"], counts["NM"], counts["Support"], total
+            ))
+
+        # Info aktualisieren
+        plan_count = len(self.saved_plans)
+        if plan_count > 0:
+            date_range = ""
+            if filter_from or filter_to:
+                date_range = f" (Filter: {filter_from or '...'} bis {filter_to or '...'})"
+            self.stats_info_label.config(text=f"{plan_count} Plan(e) gespeichert.{date_range}")
+        else:
+            self.stats_info_label.config(text="Keine Pläne gespeichert.")
+
+    def _calculate_statistics(self, filter_from: str, filter_to: str) -> Dict[str, Dict[str, int]]:
+        """Berechnet Statistik über alle gespeicherten Pläne"""
+        stats: Dict[str, Dict[str, int]] = {}
+
+        # Filter-Daten parsen
+        from_date = None
+        to_date = None
+        try:
+            if filter_from:
+                from_date = datetime.strptime(filter_from, "%d.%m.%Y")
+            if filter_to:
+                to_date = datetime.strptime(filter_to, "%d.%m.%Y")
+        except ValueError:
+            pass  # Ungültige Filter ignorieren
+
+        for plan in self.saved_plans:
+            for entry in plan.get("entries", []):
+                # Datum prüfen
+                try:
+                    entry_date = datetime.strptime(entry["Datum"], "%d.%m.%Y")
+                    if from_date and entry_date < from_date:
+                        continue
+                    if to_date and entry_date > to_date:
+                        continue
+                except ValueError:
+                    continue
+
+                # Zählen
+                for shift_type, key in [("Vormittag", "VM"), ("Nachmittag", "NM"), ("Support", "Support")]:
+                    ma = entry.get(shift_type, "").strip()
+                    if ma:
+                        if ma not in stats:
+                            stats[ma] = {"VM": 0, "NM": 0, "Support": 0}
+                        stats[ma][key] += 1
+
+        return stats
+
+    def _save_filter(self) -> None:
+        """Speichert den aktuellen Datumsfilter"""
+        self._eval_filter_from = self.eval_from_var.get().strip()
+        self._eval_filter_to = self.eval_to_var.get().strip()
+        self.save_history()
+        messagebox.showinfo("Erfolg", "Filter gespeichert!")
+
+    def _clear_all_plans(self) -> None:
+        """Löscht alle gespeicherten Pläne"""
+        if not self.saved_plans:
+            messagebox.showinfo("Info", "Keine Pläne vorhanden.")
+            return
+
+        if messagebox.askyesno("Bestätigung", f"{len(self.saved_plans)} Plan(e) wirklich löschen?"):
+            self.saved_plans = []
+            self.save_history()
+            self.update_evaluation_display()
+            messagebox.showinfo("Erfolg", "Alle Pläne gelöscht!")
 
     # -------------------- Abwesenheiten --------------------
 
@@ -695,8 +916,21 @@ class ShiftPlanner:
 
                 absent_today = self._get_absent_for_day(tag_nr, is_friday, start_date, is_monday, is_wednesday)
 
-                # Samstag: keine Schichten
-                if is_saturday:
+                # Feiertag prüfen: Datum im Format TT.MM vergleichen
+                holiday_employee = None
+                current_date_str = current_date.strftime("%d.%m")
+                for holiday in self.config.get("feiertage", []):
+                    if holiday["datum"] == current_date_str:
+                        holiday_employee = holiday.get("mitarbeiter", "")
+                        break
+
+                if holiday_employee:
+                    # Feiertag: Notdienst-MA deckt alle Schichten ab
+                    vm_employee = holiday_employee
+                    nm_employee = holiday_employee
+                    support_employee = holiday_employee
+                elif is_saturday:
+                    # Samstag: keine Schichten
                     vm_employee = ""
                     nm_employee = ""
                     support_employee = ""
@@ -788,6 +1022,90 @@ class ShiftPlanner:
                 values=(row["Datum"], tag_kurz, row["Vormittag"],
                        row["Nachmittag"], row["Support"])
             )
+
+    def _on_result_double_click(self, event) -> None:
+        """Handler für Doppelklick zum Bearbeiten einer Zelle"""
+        # Aktives Eingabefeld schließen
+        if self._edit_entry:
+            self._cancel_edit()
+
+        # Klick-Position ermitteln
+        region = self.result_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+
+        column = self.result_tree.identify_column(event.x)
+        item = self.result_tree.identify_row(event.y)
+
+        if not item or not column:
+            return
+
+        # Spaltenindex (1-basiert): #1=Datum, #2=Tag, #3=VM, #4=NM, #5=Support
+        col_idx = int(column.replace("#", ""))
+
+        # Nur VM, NM, Support editierbar (Spalten 3, 4, 5)
+        if col_idx < 3:
+            return
+
+        # Aktuelle Werte holen
+        values = list(self.result_tree.item(item, "values"))
+        current_value = values[col_idx - 1] if col_idx - 1 < len(values) else ""
+
+        # Zellen-Bounding-Box ermitteln
+        bbox = self.result_tree.bbox(item, column)
+        if not bbox:
+            return
+
+        x, y, width, height = bbox
+
+        # Entry-Widget erstellen
+        self._edit_entry = tk.Entry(self.result_tree, width=width // 8)
+        self._edit_entry.place(x=x, y=y, width=width, height=height)
+        self._edit_entry.insert(0, current_value)
+        self._edit_entry.select_range(0, tk.END)
+        self._edit_entry.focus_set()
+
+        # Metadaten speichern
+        self._edit_item = item
+        self._edit_col_idx = col_idx
+        self._edit_row_idx = self.result_tree.index(item)
+
+        # Event-Bindings
+        self._edit_entry.bind("<Return>", lambda e: self._confirm_edit())
+        self._edit_entry.bind("<Escape>", lambda e: self._cancel_edit())
+        self._edit_entry.bind("<FocusOut>", lambda e: self._confirm_edit())
+
+    def _confirm_edit(self) -> None:
+        """Bestätigt die Bearbeitung und aktualisiert die Daten"""
+        if not self._edit_entry:
+            return
+
+        new_value = self._edit_entry.get().strip()
+
+        # Treeview aktualisieren
+        values = list(self.result_tree.item(self._edit_item, "values"))
+        values[self._edit_col_idx - 1] = new_value
+        self.result_tree.item(self._edit_item, values=values)
+
+        # planning_result aktualisieren
+        col_map = {3: "Vormittag", 4: "Nachmittag", 5: "Support"}
+        if self._edit_col_idx in col_map:
+            self.planning_result[self._edit_row_idx][col_map[self._edit_col_idx]] = new_value
+
+        self._cleanup_edit()
+
+    def _cancel_edit(self) -> None:
+        """Bricht die Bearbeitung ab"""
+        self._cleanup_edit()
+
+    def _cleanup_edit(self) -> None:
+        """Räumt das Edit-Widget auf"""
+        if self._edit_entry:
+            self._edit_entry.destroy()
+            self._edit_entry = None
+        self._edit_item = None
+        self._edit_col_idx = None
+        self._edit_row_idx = None
 
     def _prepare_export_data(self) -> pd.DataFrame:
         """Bereitet Daten für Export vor"""
