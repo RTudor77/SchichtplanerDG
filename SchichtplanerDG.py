@@ -50,6 +50,7 @@ class ShiftPlanner:
         self.planning_result: List[Dict[str, str]] = []
         self.absences: Dict[int, List[str]] = {}
         self.saved_plans: List[Dict] = []  # Gespeicherte Pläne für Auswertung
+        self.manual_stats_corrections: Dict[str, Dict[str, int]] = {} # Manuelle Korrekturen {Name: {VM: +1, ...}}
         self.history_file = HISTORY_FILE
 
         self.load_config()
@@ -95,14 +96,17 @@ class ShiftPlanner:
                 with open(self.history_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.saved_plans = data.get("plans", [])
+                    self.manual_stats_corrections = data.get("manual_corrections", {})
                     self._eval_filter_from = data.get("filter_from", "")
                     self._eval_filter_to = data.get("filter_to", "")
             else:
                 self.saved_plans = []
+                self.manual_stats_corrections = {}
                 self._eval_filter_from = ""
                 self._eval_filter_to = ""
         except Exception:
             self.saved_plans = []
+            self.manual_stats_corrections = {}
             self._eval_filter_from = ""
             self._eval_filter_to = ""
 
@@ -111,6 +115,7 @@ class ShiftPlanner:
         try:
             data = {
                 "plans": self.saved_plans,
+                "manual_corrections": getattr(self, 'manual_stats_corrections', {}),
                 "filter_from": getattr(self, '_eval_filter_from', ""),
                 "filter_to": getattr(self, '_eval_filter_to', "")
             }
@@ -467,6 +472,10 @@ class ShiftPlanner:
         self.stats_tree.pack(side="left", fill="both", expand=True)
         scrollbar_stats.pack(side="right", fill="y")
 
+        # Double-click zum Bearbeiten der Statistik
+        self.stats_tree.bind("<Double-1>", self._on_stats_double_click)
+        self._stats_edit_entry = None
+
         # === INFO-BEREICH ===
         info_frame = ttk.Frame(eval_frame)
         info_frame.pack(fill="x", pady=(10, 0))
@@ -653,6 +662,21 @@ class ShiftPlanner:
                             stats[ma] = {"VM": 0, "NM": 0, "Support": 0}
                         stats[ma][key] += 1
 
+                        if ma not in stats:
+                            stats[ma] = {"VM": 0, "NM": 0, "Support": 0}
+                        stats[ma][key] += 1
+
+        # Manuelle Korrekturen anwenden
+        for ma, corrections in self.manual_stats_corrections.items():
+            if ma not in stats:
+                 # Wenn MA nicht in den Plänen, aber eine Korrektur existiert, trotzdem anzeigen
+                 if any(corrections.values()): # Nur wenn Korrektur != 0
+                     stats[ma] = {"VM": 0, "NM": 0, "Support": 0}
+            
+            if ma in stats:
+                for key in ["VM", "NM", "Support"]:
+                    stats[ma][key] += corrections.get(key, 0)
+
         return stats
 
     def _save_filter(self) -> None:
@@ -662,7 +686,115 @@ class ShiftPlanner:
         self.save_history()
         messagebox.showinfo("Erfolg", "Filter gespeichert!")
 
-    def _clear_all_plans(self) -> None:
+    def _on_stats_double_click(self, event) -> None:
+        """Handler für Doppleclick auf Statistik"""
+        # Aktives Eingabefeld schließen
+        if getattr(self, '_stats_edit_entry', None):
+            self._stats_cancel_edit()
+
+        region = self.stats_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+
+        column = self.stats_tree.identify_column(event.x)
+        item = self.stats_tree.identify_row(event.y)
+
+        if not item or not column:
+            return
+
+        # Spaltenindex: #1=MA, #2=VM, #3=NM, #4=Support, #5=Gesamt
+        col_idx = int(column.replace("#", ""))
+        
+        # MA und Gesamt nicht editierbar
+        if col_idx == 1 or col_idx == 5:
+            return
+
+        # Aktuelle Werte
+        values = list(self.stats_tree.item(item, "values"))
+        current_val = values[col_idx - 1]
+
+        bbox = self.stats_tree.bbox(item, column)
+        if not bbox:
+            return
+        
+        x, y, width, height = bbox
+
+        self._stats_edit_entry = tk.Entry(self.stats_tree, width=width // 8)
+        self._stats_edit_entry.place(x=x, y=y, width=width, height=height)
+        self._stats_edit_entry.insert(0, current_val)
+        self._stats_edit_entry.select_range(0, tk.END)
+        self._stats_edit_entry.focus_set()
+
+        # Metadaten speichern
+        self._stats_edit_item = item
+        self._stats_edit_col_idx = col_idx
+        # MA Name für Speicherung
+        self._stats_edit_ma = values[0] 
+
+        self._stats_edit_entry.bind("<Return>", lambda e: self._confirm_stats_edit())
+        self._stats_edit_entry.bind("<Escape>", lambda e: self._stats_cancel_edit())
+        self._stats_edit_entry.bind("<FocusOut>", lambda e: self._confirm_stats_edit())
+
+    def _confirm_stats_edit(self) -> None:
+        """Bestätigt Statistik-Bearbeitung"""
+        if not getattr(self, '_stats_edit_entry', None):
+            return
+
+        try:
+            new_val_str = self._stats_edit_entry.get().strip()
+            new_val = int(new_val_str)
+        except ValueError:
+            # Ungültige Eingabe -> Abbruch
+            self._stats_cancel_edit()
+            return
+        
+        # Wir müssen den Delta berechnen. 
+        # Das Problem: Der angezeigte Wert ist (Berechnet + Manuell).
+        # Wir wollen Manuell_Neu so setzen, dass (Berechnet + Manuell_Neu) = Eingabe_Neu
+        # => Manuell_Neu = Eingabe_Neu - Berechnet
+        
+        # 1. Berechneten Wert (ohne Korrektur) neu ermitteln
+        filter_from = self.eval_from_var.get().strip() if hasattr(self, 'eval_from_var') else ""
+        filter_to = self.eval_to_var.get().strip() if hasattr(self, 'eval_to_var') else ""
+        
+        # Temporär Korrekturen deaktivieren um Basiswert zu bekommen
+        current_corrections = self.manual_stats_corrections
+        self.manual_stats_corrections = {} 
+        base_stats = self._calculate_statistics(filter_from, filter_to)
+        self.manual_stats_corrections = current_corrections # Restore
+
+        ma = self._stats_edit_ma
+        col_map = {2: "VM", 3: "NM", 4: "Support"}
+        key = col_map[self._stats_edit_col_idx]
+
+        base_val = 0
+        if ma in base_stats:
+            base_val = base_stats[ma].get(key, 0)
+        
+        # Neue Korrektur berechnen
+        correction = new_val - base_val
+
+        # Speichern
+        if ma not in self.manual_stats_corrections:
+            self.manual_stats_corrections[ma] = {}
+        
+        self.manual_stats_corrections[ma][key] = correction
+        
+        # Wenn Korrektur 0 ist, Eintrag ggf. bereinigen
+        if correction == 0:
+            if key in self.manual_stats_corrections[ma]:
+                del self.manual_stats_corrections[ma][key]
+            if not self.manual_stats_corrections[ma]:
+                del self.manual_stats_corrections[ma]
+
+        self.save_history()
+        self._stats_cancel_edit()
+        self.update_evaluation_display()
+
+    def _stats_cancel_edit(self) -> None:
+        if getattr(self, '_stats_edit_entry', None):
+            self._stats_edit_entry.destroy()
+            self._stats_edit_entry = None
         """Löscht alle gespeicherten Pläne"""
         if not self.saved_plans:
             messagebox.showinfo("Info", "Keine Pläne vorhanden.")
