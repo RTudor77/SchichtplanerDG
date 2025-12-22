@@ -544,7 +544,8 @@ class ShiftPlanner:
 
             ("D) Support-Logik (Vormittag)", "bold"),
             ("\n• Wird ein Mitarbeiter aus ", ""), ("Pool B (Teilweise)", "bold"), (" gewählt, MUSS zwingend ein Support-Mitarbeiter aus ", ""), ("Pool C", "bold"), (" dazu kommen.\n"
-             "• Ist der gewählte Mitarbeiter aus Pool A ('Vollprofi'), wird kein Support benötigt.\n", ""),
+             "• Ist der gewählte Mitarbeiter aus Pool A ('Vollprofi'), wird kein Support benötigt.\n"
+             "• ", ""), ("Ausnahme Montag Woche 2:", "bold"), (" Am Montag der zweiten Woche wird IMMER ein Support eingeplant (höheres Aufkommen).\n", ""),
 
             ("\n4. Feiertage", "h2"),
             ("Feiertage werden im ersten Tab definiert. Für einen Feiertag wird ein EINER Mitarbeiter festgelegt, "
@@ -1310,7 +1311,11 @@ class ShiftPlanner:
             used_today.append(vm_employee)
 
             # Support nötig?
-            if vm_employee in self.config["pool_vm_teilweise"]:
+            # 1. Immer wenn VM aus Pool B (braucht Unterstützung)
+            # 2. Montag in Woche 2 (tag_nr == 6) - höheres Aufkommen
+            needs_support = (vm_employee in self.config["pool_vm_teilweise"]) or (tag_nr == 6)
+            
+            if needs_support:
                 support_employee, new_support_pos, support_skipped = self._find_employee_with_catchup(
                     self.config["pool_vm_support"],
                     "vm_support",
