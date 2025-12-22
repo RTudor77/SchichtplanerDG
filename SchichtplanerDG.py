@@ -14,6 +14,8 @@ WINDOW_GEOMETRY = "1400x900"
 MIN_WINDOW_SIZE = (1200, 800)
 CONFIG_FILE = "shift_config.json"
 HISTORY_FILE = "shift_history.json"
+CATCHUP_DELAY_DAYS = 2  # Tage bis Nachhol-Versuch für übersprungene Mitarbeiter
+CATCHUP_PRIORITY_DAYS = 4  # Nach diesen Tagen bekommt Nachhol absolute Priorität
 
 # Excel Farbpalette
 COLOR_GREEN = "A9D18E"
@@ -542,14 +544,22 @@ class ShiftPlanner:
 
             ("D) Support-Logik (Vormittag)", "bold"),
             ("\n• Wird ein Mitarbeiter aus ", ""), ("Pool B (Teilweise)", "bold"), (" gewählt, MUSS zwingend ein Support-Mitarbeiter aus ", ""), ("Pool C", "bold"), (" dazu kommen.\n"
-             "• Ist der gewählte Mitarbeiter aus Pool A (""Vollprofi""), wird kein Support benötigt.\n", ""),
+             "• Ist der gewählte Mitarbeiter aus Pool A ('Vollprofi'), wird kein Support benötigt.\n", ""),
 
             ("\n4. Feiertage", "h2"),
             ("Feiertage werden im ersten Tab definiert. Für einen Feiertag wird ein EINER Mitarbeiter festgelegt, "
              "der dann den ", ""), ("kompletten Tag", "italic"), (" übernimmt. Dieser Mitarbeiter wird für den Rest der Woche aus der regulären Rotation genommen, damit er nicht überlastet wird.", ""),
              
             ("\n5. Auswertung", "h2"),
-            ("Fertige Pläne können gespeichert werden. Im Tab 'Auswertung' sehen Sie dann eine Statistik, wer wie oft welche Schicht hatte.", "")
+            ("Fertige Pläne können gespeichert werden. Im Tab 'Auswertung' sehen Sie dann eine Statistik, wer wie oft welche Schicht hatte.", ""),
+
+            ("\n6. Nachhol-System (NEU)", "h2"),
+            ("Wenn ein Mitarbeiter übersprungen wird (wegen Abwesenheit oder weil er bereits eine andere Schicht am selben Tag hat), "
+             "wird er automatisch in eine ", ""), ("Nachhol-Queue", "bold"), (" aufgenommen.\n\n", ""),
+            ("• ", ""), ("Nach 2 Tagen:", "bold"), (" Der übersprungene MA wird bevorzugt eingeplant, wenn der reguläre Kandidat nicht verfügbar ist.\n", ""),
+            ("• ", ""), ("Nach 4 Tagen:", "bold"), (" Der übersprungene MA bekommt absolute Priorität und wird auch vor einem verfügbaren regulären Kandidaten eingeplant.\n", ""),
+            ("• ", ""), ("Keine Dopplung:", "bold"), (" Nach einer Nachhol-Einplanung wird die Pool-Position so angepasst, dass derselbe MA nicht zweimal in kurzer Zeit drankommt.\n", ""),
+            ("\nDieses System sorgt für maximale Fairness auch bei häufigen Abwesenheiten.", "")
         ]
 
         for text, tag in help_content:
@@ -795,6 +805,8 @@ class ShiftPlanner:
         if getattr(self, '_stats_edit_entry', None):
             self._stats_edit_entry.destroy()
             self._stats_edit_entry = None
+
+    def _clear_all_plans(self) -> None:
         """Löscht alle gespeicherten Pläne"""
         if not self.saved_plans:
             messagebox.showinfo("Info", "Keine Pläne vorhanden.")
@@ -1101,6 +1113,93 @@ class ShiftPlanner:
                 return candidate, (candidate_idx + 1) % pool_size
         return None
 
+    def _find_employee_with_catchup(self, pool: List[str], pool_key: str, start_pos: int,
+                                     excluded: List[str], absent: List[str],
+                                     catchup_queues: Dict[str, List[Dict]], current_tag_nr: int,
+                                     pool_positions: Dict[str, int]) -> Tuple[Optional[str], int, List[str]]:
+        """
+        Sucht Mitarbeiter mit Berücksichtigung der Nachhol-Queue.
+        Gibt (employee, new_position, skipped_employees) zurück.
+        
+        NEUE Logik (Priorität: normale Rotation zuerst):
+        1. Prüfe ob der reguläre Kandidat (an start_pos) verfügbar ist
+        2. Wenn ja → verwende diesen (normale Rotation)
+        3. Wenn nein → prüfe Nachhol-Queue, dann andere aus Rotation
+        """
+        skipped_employees: List[str] = []
+        queue = catchup_queues.get(pool_key, [])
+        
+        if not pool:
+            return None, start_pos, skipped_employees
+        
+        pool_size = len(pool)
+        
+        # 0. PRIORITÄTS-ESKALATION: Prüfe ob jemand in Queue zu lange wartet
+        for i, entry in enumerate(queue):
+            employee = entry["employee"]
+            skipped_at = entry["skipped_at_tag"]
+            waiting_days = current_tag_nr - skipped_at
+            
+            if waiting_days >= CATCHUP_PRIORITY_DAYS:
+                # Dieser MA wartet zu lange - absolute Priorität!
+                if employee not in absent and employee not in excluded:
+                    queue.pop(i)
+                    # Pool-Position NACH diesem MA setzen (um Dopplung zu vermeiden)
+                    if employee in pool:
+                        emp_idx = pool.index(employee)
+                        new_pos = (emp_idx + 1) % pool_size
+                    else:
+                        new_pos = (start_pos + 1) % pool_size
+                    return employee, new_pos, skipped_employees
+                else:
+                    # Immer noch nicht verfügbar → Wartezeit zurücksetzen
+                    entry["available_from_tag"] = current_tag_nr + CATCHUP_DELAY_DAYS
+        
+        # 1. Prüfe zuerst den regulären Kandidaten (an start_pos)
+        regular_candidate = pool[start_pos]
+        if regular_candidate not in absent and regular_candidate not in excluded:
+            # Regulärer Kandidat ist verfügbar! Normale Rotation.
+            new_pos = (start_pos + 1) % pool_size
+            return regular_candidate, new_pos, skipped_employees
+        
+        # 2. Regulärer Kandidat ist NICHT verfügbar → zur Nachhol-Queue hinzufügen
+        already_in_queue = any(e["employee"] == regular_candidate for e in queue)
+        if not already_in_queue:
+            skipped_employees.append(regular_candidate)
+        
+        # 3. Jetzt prüfe Nachhol-Queue für Ersatz
+        for i, entry in enumerate(queue):
+            employee = entry["employee"]
+            available_from = entry["available_from_tag"]
+            
+            if current_tag_nr >= available_from:
+                # Dieser MA ist bereit für Nachhol-Versuch
+                if employee not in absent and employee not in excluded:
+                    # Verfügbar! Aus Queue entfernen und zurückgeben
+                    queue.pop(i)
+                    # Pool-Position NACH diesem MA setzen (um Dopplung zu vermeiden)
+                    if employee in pool:
+                        emp_idx = pool.index(employee)
+                        new_pos = (emp_idx + 1) % pool_size
+                    else:
+                        new_pos = (start_pos + 1) % pool_size
+                    return employee, new_pos, skipped_employees
+                else:
+                    # Immer noch nicht verfügbar → erneut in Queue (für später)
+                    entry["available_from_tag"] = current_tag_nr + CATCHUP_DELAY_DAYS
+        
+        # 4. Keine Nachhol-Kandidaten verfügbar → nächsten aus normaler Rotation suchen
+        for i in range(1, pool_size):  # Start bei 1, da 0 (regulärer Kandidar) bereits geprüft
+            candidate_idx = (start_pos + i) % pool_size
+            candidate = pool[candidate_idx]
+            
+            if candidate not in absent and candidate not in excluded:
+                # Gefunden! Gib zurück mit neuer Position
+                new_pos = (candidate_idx + 1) % pool_size
+                return candidate, new_pos, skipped_employees
+        
+        return None, start_pos, skipped_employees
+
     def create_planning(self) -> None:
         """Erstellt die Schichtplanung für 2 Wochen Mo-Sa (12 Tage) - OPTIMIERT"""
         try:
@@ -1112,6 +1211,13 @@ class ShiftPlanner:
 
             self.planning_result = []
             pool_positions = self._initialize_pool_positions(first_vm, first_nm, first_support)
+            
+            # Nachhol-Queue für übersprungene Mitarbeiter
+            catchup_queues: Dict[str, List[Dict]] = {
+                "vm_alle": [],
+                "nm_alle": [],
+                "vm_support": []
+            }
 
             # 12 Tage: Mo-Sa, Mo-Sa (2 Wochen ohne Sonntag)
             for tag_nr in range(DAYS_IN_PLANNING):
@@ -1154,7 +1260,7 @@ class ShiftPlanner:
                 else:
                     # Alle anderen Tage: automatische Planung
                     vm_employee, nm_employee, support_employee = self._plan_day(
-                        tag_nr, absent_today, pool_positions
+                        tag_nr, absent_today, pool_positions, catchup_queues
                     )
 
                 self.planning_result.append({
@@ -1170,50 +1276,85 @@ class ShiftPlanner:
             messagebox.showerror("Fehler", f"Fehler bei der Planung: {e}")
 
     def _plan_day(self, tag_nr: int, absent_today: List[str],
-                  pool_positions: Dict[str, int]) -> Tuple[Optional[str], Optional[str], str]:
-        """Plant einen einzelnen Tag. Gibt (vm_employee, nm_employee, support_employee) zurück"""
+                  pool_positions: Dict[str, int],
+                  catchup_queues: Dict[str, List[Dict]]) -> Tuple[Optional[str], Optional[str], str]:
+        """Plant einen einzelnen Tag mit Nachhol-Queue. Gibt (vm_employee, nm_employee, support_employee) zurück"""
         yesterday_nm = self.planning_result[tag_nr - 1]["Nachmittag"] if tag_nr > 0 else None
         forbidden_vm = [yesterday_nm] if yesterday_nm else []
         used_today = []
 
-        # Vormittag planen
-        vm_result = self._find_employee_from_pool(
+        # Vormittag planen (mit Nachhol-Queue)
+        vm_employee, new_vm_pos, vm_skipped = self._find_employee_with_catchup(
             self.config["pool_vm_alle"],
+            "vm_alle",
             pool_positions["vm_alle"],
             forbidden_vm,
-            absent_today
+            absent_today,
+            catchup_queues,
+            tag_nr,
+            pool_positions
         )
-
-        vm_employee = None
+        
+        pool_positions["vm_alle"] = new_vm_pos
         support_employee = ""
 
-        if vm_result:
-            vm_employee, pool_positions["vm_alle"] = vm_result
+        # Übersprungene zur Queue hinzufügen
+        for skipped in vm_skipped:
+            catchup_queues["vm_alle"].append({
+                "employee": skipped,
+                "skipped_at_tag": tag_nr,
+                "available_from_tag": tag_nr + CATCHUP_DELAY_DAYS
+            })
+
+        if vm_employee:
             used_today.append(vm_employee)
 
             # Support nötig?
             if vm_employee in self.config["pool_vm_teilweise"]:
-                support_result = self._find_employee_from_pool(
+                support_employee, new_support_pos, support_skipped = self._find_employee_with_catchup(
                     self.config["pool_vm_support"],
+                    "vm_support",
                     pool_positions["vm_support"],
                     [vm_employee] + forbidden_vm,
-                    absent_today
+                    absent_today,
+                    catchup_queues,
+                    tag_nr,
+                    pool_positions
                 )
-                if support_result:
-                    support_employee, pool_positions["vm_support"] = support_result
+                pool_positions["vm_support"] = new_support_pos
+                
+                # Übersprungene Support-MA zur Queue
+                for skipped in support_skipped:
+                    catchup_queues["vm_support"].append({
+                        "employee": skipped,
+                        "skipped_at_tag": tag_nr,
+                        "available_from_tag": tag_nr + CATCHUP_DELAY_DAYS
+                    })
+                
+                if support_employee:
                     used_today.append(support_employee)
 
-        # Nachmittag planen
-        nm_result = self._find_employee_from_pool(
+        # Nachmittag planen (mit Nachhol-Queue)
+        nm_employee, new_nm_pos, nm_skipped = self._find_employee_with_catchup(
             self.config["pool_nm_alle"],
+            "nm_alle",
             pool_positions["nm_alle"],
             used_today,
-            absent_today
+            absent_today,
+            catchup_queues,
+            tag_nr,
+            pool_positions
         )
+        
+        pool_positions["nm_alle"] = new_nm_pos
 
-        nm_employee = None
-        if nm_result:
-            nm_employee, pool_positions["nm_alle"] = nm_result
+        # Übersprungene zur Queue hinzufügen
+        for skipped in nm_skipped:
+            catchup_queues["nm_alle"].append({
+                "employee": skipped,
+                "skipped_at_tag": tag_nr,
+                "available_from_tag": tag_nr + CATCHUP_DELAY_DAYS
+            })
 
         return vm_employee, nm_employee, support_employee
 
