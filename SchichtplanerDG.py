@@ -1338,6 +1338,9 @@ class ShiftPlanner:
                 
                 if support_employee:
                     used_today.append(support_employee)
+            else:
+                # Kein separater Support nötig → VM-MA auch in Support-Spalte eintragen (Übersichtlichkeit)
+                support_employee = vm_employee
 
         # Nachmittag planen (mit Nachhol-Queue)
         nm_employee, new_nm_pos, nm_skipped = self._find_employee_with_catchup(
