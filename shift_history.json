@@ -90,8 +90,100 @@
           "Support": ""
         }
       ]
+    },
+    {
+      "start_date": "19.01.2026",
+      "end_date": "31.01.2026",
+      "saved_at": "22.12.2025 12:51",
+      "entries": [
+        {
+          "Datum": "19.01.2026",
+          "Wochentag": "Montag",
+          "Vormittag": "MH",
+          "Nachmittag": "JB",
+          "Support": "IL"
+        },
+        {
+          "Datum": "20.01.2026",
+          "Wochentag": "Dienstag",
+          "Vormittag": "RI",
+          "Nachmittag": "AN",
+          "Support": "RR"
+        },
+        {
+          "Datum": "21.01.2026",
+          "Wochentag": "Mittwoch",
+          "Vormittag": "TR",
+          "Nachmittag": "MH",
+          "Support": ""
+        },
+        {
+          "Datum": "22.01.2026",
+          "Wochentag": "Donnerstag",
+          "Vormittag": "JB",
+          "Nachmittag": "RI",
+          "Support": ""
+        },
+        {
+          "Datum": "23.01.2026",
+          "Wochentag": "Freitag",
+          "Vormittag": "FA",
+          "Nachmittag": "CA",
+          "Support": ""
+        },
+        {
+          "Datum": "24.01.2026",
+          "Wochentag": "Samstag",
+          "Vormittag": "",
+          "Nachmittag": "",
+          "Support": ""
+        },
+        {
+          "Datum": "26.01.2026",
+          "Wochentag": "Montag",
+          "Vormittag": "RR",
+          "Nachmittag": "IL",
+          "Support": ""
+        },
+        {
+          "Datum": "27.01.2026",
+          "Wochentag": "Dienstag",
+          "Vormittag": "MH",
+          "Nachmittag": "RR",
+          "Support": "FA"
+        },
+        {
+          "Datum": "28.01.2026",
+          "Wochentag": "Mittwoch",
+          "Vormittag": "RI",
+          "Nachmittag": "FA",
+          "Support": "JB"
+        },
+        {
+          "Datum": "29.01.2026",
+          "Wochentag": "Donnerstag",
+          "Vormittag": "TR",
+          "Nachmittag": "JB",
+          "Support": ""
+        },
+        {
+          "Datum": "30.01.2026",
+          "Wochentag": "Freitag",
+          "Vormittag": "FA",
+          "Nachmittag": "TR",
+          "Support": ""
+        },
+        {
+          "Datum": "31.01.2026",
+          "Wochentag": "Samstag",
+          "Vormittag": "",
+          "Nachmittag": "",
+          "Support": ""
+        }
+      ]
     }
   ],
+  "manual_corrections": {},
   "filter_from": "",
   "filter_to": ""
 }

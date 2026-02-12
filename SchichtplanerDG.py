@@ -126,6 +126,104 @@ class ShiftPlanner:
         except Exception as e:
             messagebox.showerror("Fehler", f"Fehler beim Speichern der Historie: {e}")
 
+
+    def _get_last_tag10_data(self) -> Optional[Dict[str, str]]:
+        """
+        Holt Daten basierend auf letztem Plan:
+        - Datum: Letzter Eintrag (Sa) + 2 Tage = Nächster Montag
+        - MA: Rotation wird FORTGESETZT basierend auf Tag 10 (Do)
+        - Support: Tag 1 (Mo) erzwingt Support (wie Montag Woche 2)
+        """
+        if not self.saved_plans:
+            return None
+        
+        try:
+            # 1. Letzten Plan finden
+            sorted_plans = sorted(
+                self.saved_plans,
+                key=lambda p: datetime.strptime(p.get("start_date", "01.01.1900"), "%d.%m.%Y"),
+                reverse=True
+            )
+            last_plan = sorted_plans[0]
+            entries = last_plan.get("entries", [])
+            
+            if len(entries) < 12:
+                return None
+
+            # 2. Datum berechnen (Ende + 2 Tage)
+            last_entry = entries[11] # Samstag
+            last_date = datetime.strptime(last_entry.get("Datum", ""), "%d.%m.%Y")
+            new_start_date = last_date + timedelta(days=2)
+            
+            # 3. Mitarbeiter aus Tag 10 (Index 9) finden
+            tag10 = entries[9]
+            prev_vm = tag10.get("Vormittag", "")
+            prev_nm = tag10.get("Nachmittag", "")
+            prev_support = tag10.get("Support", "")
+
+            # Falls Support an Tag 10 leer war, rückwärts suchen für Rotation
+            if not prev_support:
+                for i in range(8, -1, -1):
+                    s = entries[i].get("Support", "")
+                    if s:
+                        prev_support = s
+                        break
+            
+            # 4. Nachfolger bestimmen
+            def get_successor(name: str, pool_key: str) -> str:
+                pool = self.config.get(pool_key, [])
+                if not pool: return ""
+                if name in pool:
+                    idx = pool.index(name)
+                    return pool[(idx + 1) % len(pool)]
+                return pool[0] # Fallback: Erster der Liste
+
+            next_vm = get_successor(prev_vm, "pool_vm_alle")
+            next_nm = get_successor(prev_nm, "pool_nm_alle")
+            # Support ist für Tag 1 (Montag) PFLICHT ("wie Montag Woche 2")
+            next_support = get_successor(prev_support, "pool_vm_support")
+
+            return {
+                "start_date": new_start_date.strftime("%d.%m.%Y"),
+                "vm": next_vm,
+                "nm": next_nm,
+                "support": next_support
+            }
+            
+        except Exception:
+            pass
+        
+        return None
+
+
+
+    def _on_auto_mode_toggle(self) -> None:
+        """Handler für Automatik-Modus Toggle"""
+        if self.auto_mode_var.get():
+            # Automatik aktiviert: Felder aus letztem Tag 10 befüllen
+            tag10_data = self._get_last_tag10_data()
+            
+            if tag10_data:
+                # Felder leeren und neu befüllen
+                self.start_date_entry.delete(0, tk.END)
+                self.start_date_entry.insert(0, tag10_data["start_date"])
+                
+                self.first_vm_entry.delete(0, tk.END)
+                self.first_vm_entry.insert(0, tag10_data["vm"])
+                
+                self.first_nm_entry.delete(0, tk.END)
+                self.first_nm_entry.insert(0, tag10_data["nm"])
+                
+                self.first_support_entry.delete(0, tk.END)
+                self.first_support_entry.insert(0, tag10_data["support"])
+            else:
+                messagebox.showinfo(
+                    "Automatik-Modus",
+                    "Keine gespeicherten Pläne gefunden.\n"
+                    "Bitte zuerst einen Plan speichern oder manuell eingeben."
+                )
+                self.auto_mode_var.set(False)
+
     def _get_all_employees(self) -> List[str]:
         """Gibt gecachte Liste aller Mitarbeiter zurück (Performance-Optimierung)"""
         if self._cache_dirty or self._all_employees_cache is None:
@@ -323,6 +421,19 @@ class ShiftPlanner:
                   style="Accent.TButton").grid(row=0, column=8, padx=5)
         ttk.Button(input_frame, text="Plan speichern", command=self.save_current_plan).grid(row=0, column=9, padx=5)
         ttk.Button(input_frame, text="Excel Export", command=self.export_excel).grid(row=0, column=10, padx=5)
+
+        # Automatik-Modus (zweite Zeile)
+        auto_frame = ttk.Frame(settings_frame)
+        auto_frame.pack(fill="x", pady=(10, 0))
+        
+        self.auto_mode_var = tk.BooleanVar(value=False)
+        self.auto_mode_check = ttk.Checkbutton(
+            auto_frame, 
+            text="Automatik-Modus (übernimmt Werte vom letzten gespeicherten Tag 10)",
+            variable=self.auto_mode_var,
+            command=self._on_auto_mode_toggle
+        )
+        self.auto_mode_check.pack(side="left")
 
         # === HAUPTBEREICH: Planungsergebnis (links) + Abwesenheiten (rechts) ===
         main_paned = ttk.PanedWindow(planning_frame, orient="horizontal")
@@ -1122,10 +1233,13 @@ class ShiftPlanner:
         Sucht Mitarbeiter mit Berücksichtigung der Nachhol-Queue.
         Gibt (employee, new_position, skipped_employees) zurück.
         
-        NEUE Logik (Priorität: normale Rotation zuerst):
+        Logik:
+        0. PRIORITÄTS-ESKALATION: Wer >= 4 Tage wartet, bekommt absolute Priorität
+           - Wenn excluded wegen anderer Schicht am selben Tag: trotzdem einplanen!
         1. Prüfe ob der reguläre Kandidat (an start_pos) verfügbar ist
         2. Wenn ja → verwende diesen (normale Rotation)
         3. Wenn nein → prüfe Nachhol-Queue, dann andere aus Rotation
+        4. Alle übersprungenen werden zur Queue hinzugefügt
         """
         skipped_employees: List[str] = []
         queue = catchup_queues.get(pool_key, [])
@@ -1136,14 +1250,18 @@ class ShiftPlanner:
         pool_size = len(pool)
         
         # 0. PRIORITÄTS-ESKALATION: Prüfe ob jemand in Queue zu lange wartet
-        for i, entry in enumerate(queue):
+        # Wichtig: Kopie der Queue durchlaufen, da wir sie modifizieren
+        for i in range(len(queue) - 1, -1, -1):  # Rückwärts iterieren für sicheres pop()
+            entry = queue[i]
             employee = entry["employee"]
             skipped_at = entry["skipped_at_tag"]
             waiting_days = current_tag_nr - skipped_at
             
             if waiting_days >= CATCHUP_PRIORITY_DAYS:
                 # Dieser MA wartet zu lange - absolute Priorität!
-                if employee not in absent and employee not in excluded:
+                if employee not in absent:
+                    # Auch wenn excluded (z.B. wegen VM am selben Tag) - trotzdem einplanen!
+                    # Das ist der Fix: Nach 4 Tagen Warten hat Catch-up Vorrang
                     queue.pop(i)
                     # Pool-Position NACH diesem MA setzen (um Dopplung zu vermeiden)
                     if employee in pool:
@@ -1153,7 +1271,8 @@ class ShiftPlanner:
                         new_pos = (start_pos + 1) % pool_size
                     return employee, new_pos, skipped_employees
                 else:
-                    # Immer noch nicht verfügbar → Wartezeit zurücksetzen
+                    # Wirklich abwesend (Urlaub etc.) → Wartezeit zurücksetzen
+                    entry["skipped_at_tag"] = current_tag_nr  # FIX: skipped_at zurücksetzen!
                     entry["available_from_tag"] = current_tag_nr + CATCHUP_DELAY_DAYS
         
         # 1. Prüfe zuerst den regulären Kandidaten (an start_pos)
@@ -1169,7 +1288,8 @@ class ShiftPlanner:
             skipped_employees.append(regular_candidate)
         
         # 3. Jetzt prüfe Nachhol-Queue für Ersatz
-        for i, entry in enumerate(queue):
+        for i in range(len(queue) - 1, -1, -1):  # Rückwärts iterieren für sicheres pop()
+            entry = queue[i]
             employee = entry["employee"]
             available_from = entry["available_from_tag"]
             
@@ -1185,12 +1305,13 @@ class ShiftPlanner:
                     else:
                         new_pos = (start_pos + 1) % pool_size
                     return employee, new_pos, skipped_employees
-                else:
-                    # Immer noch nicht verfügbar → erneut in Queue (für später)
+                # Nicht verfügbar, aber available_from erreicht → available_from aktualisieren
+                elif employee in absent:
                     entry["available_from_tag"] = current_tag_nr + CATCHUP_DELAY_DAYS
+                # Wenn excluded (nicht absent), warten wir auf Prioritäts-Eskalation
         
         # 4. Keine Nachhol-Kandidaten verfügbar → nächsten aus normaler Rotation suchen
-        for i in range(1, pool_size):  # Start bei 1, da 0 (regulärer Kandidar) bereits geprüft
+        for i in range(1, pool_size):  # Start bei 1, da 0 (regulärer Kandidat) bereits geprüft
             candidate_idx = (start_pos + i) % pool_size
             candidate = pool[candidate_idx]
             
@@ -1198,6 +1319,11 @@ class ShiftPlanner:
                 # Gefunden! Gib zurück mit neuer Position
                 new_pos = (candidate_idx + 1) % pool_size
                 return candidate, new_pos, skipped_employees
+            else:
+                # Auch diesen als übersprungen markieren (wenn nicht schon in Queue)
+                already_in_queue = any(e["employee"] == candidate for e in queue)
+                if not already_in_queue and candidate not in skipped_employees:
+                    skipped_employees.append(candidate)
         
         return None, start_pos, skipped_employees
 
