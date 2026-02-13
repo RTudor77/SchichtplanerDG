@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 # Konstanten
 DAYS_IN_PLANNING = 12
 DAYS_PER_WEEK = 6
+WORKING_DAYS = 10  # Nur Arbeitstage Mo-Fr (ohne Samstage)
 WEEKDAY_NAMES = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
 WINDOW_GEOMETRY = "1400x900"
 MIN_WINDOW_SIZE = (1200, 800)
@@ -54,6 +55,7 @@ class ShiftPlanner:
         self.saved_plans: List[Dict] = []  # Gespeicherte Pläne für Auswertung
         self.manual_stats_corrections: Dict[str, Dict[str, int]] = {} # Manuelle Korrekturen {Name: {VM: +1, ...}}
         self.history_file = HISTORY_FILE
+        self._plan_manually_edited = False  # Flag: Plan wurde nachträglich geändert
 
         self.load_config()
         self.load_history()
@@ -262,7 +264,9 @@ class ShiftPlanner:
         self.create_shift_planning_tab(notebook)
         # Tab 3: Auswertung
         self.create_evaluation_tab(notebook)
-        # Tab 4: Hilfe
+        # Tab 4: Historie
+        self.create_history_tab(notebook)
+        # Tab 5: Hilfe
         self.create_help_tab(notebook)
 
     def _create_pool_entry(self, parent: ttk.Frame, row: int, label_text: str,
@@ -484,7 +488,7 @@ class ShiftPlanner:
         ttk.Label(input_absence_frame, text="Tag:").grid(row=0, column=2, sticky="w")
         self.day_var = tk.StringVar()
         self.day_combo = ttk.Combobox(input_absence_frame, textvariable=self.day_var, width=8,
-                                      values=[f"Tag {i + 1}" for i in range(DAYS_IN_PLANNING)])
+                                      values=[f"Tag {i + 1}" for i in range(WORKING_DAYS)])
         self.day_combo.grid(row=0, column=3, padx=5)
 
         btn_frame = ttk.Frame(absence_frame)
@@ -601,6 +605,264 @@ class ShiftPlanner:
         # Initial aktualisieren
         self.root.after(200, self.update_evaluation_display)
 
+    # -------------------- Historie --------------------
+
+    def create_history_tab(self, notebook: ttk.Notebook) -> None:
+        """Erstellt Tab für historische Planungsübersicht"""
+        history_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(history_frame, text="Historie")
+
+        # === OBERER BEREICH: Planübersicht ===
+        overview_frame = ttk.LabelFrame(history_frame, text=" Gespeicherte Pläne ", padding=10)
+        overview_frame.pack(fill="x", pady=(0, 10))
+
+        # Treeview für Planübersicht
+        hist_columns = ("Zeitraum", "Gespeichert", "Geändert", "Anmerkung")
+        self.history_tree = ttk.Treeview(overview_frame, columns=hist_columns, show="headings",
+                                          height=8, style="Modern.Treeview")
+        self.history_tree.heading("Zeitraum", text="Zeitraum")
+        self.history_tree.heading("Gespeichert", text="Gespeichert am")
+        self.history_tree.heading("Geändert", text="Geändert")
+        self.history_tree.heading("Anmerkung", text="Anmerkung")
+        self.history_tree.column("Zeitraum", width=200, anchor="center")
+        self.history_tree.column("Gespeichert", width=140, anchor="center")
+        self.history_tree.column("Geändert", width=70, anchor="center")
+        self.history_tree.column("Anmerkung", width=300, anchor="w")
+
+        scrollbar_hist = ttk.Scrollbar(overview_frame, orient="vertical", command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=scrollbar_hist.set)
+        self.history_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_hist.pack(side="right", fill="y")
+
+        # Buttons
+        btn_frame = ttk.Frame(history_frame)
+        btn_frame.pack(fill="x", pady=(0, 10))
+        ttk.Button(btn_frame, text="Plan anzeigen", command=self._view_plan_detail).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Anmerkung bearbeiten", command=self._edit_plan_note).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Plan löschen", command=self._delete_single_plan).pack(side="left", padx=2)
+
+        # === UNTERER BEREICH: Detailansicht ===
+        detail_frame = ttk.LabelFrame(history_frame, text=" Detailansicht ", padding=10)
+        detail_frame.pack(fill="both", expand=True)
+
+        detail_columns = ("Datum", "Tag", "VM", "NM", "Support")
+        self.history_detail_tree = ttk.Treeview(detail_frame, columns=detail_columns, show="headings",
+                                                 height=14, style="Modern.Treeview")
+        for col_name, width in [("Datum", 85), ("Tag", 80), ("VM", 80), ("NM", 80), ("Support", 80)]:
+            self.history_detail_tree.heading(col_name, text=col_name)
+            self.history_detail_tree.column(col_name, width=width, minwidth=50, anchor="center")
+
+        scrollbar_detail = ttk.Scrollbar(detail_frame, orient="vertical", command=self.history_detail_tree.yview)
+        self.history_detail_tree.configure(yscrollcommand=scrollbar_detail.set)
+        self.history_detail_tree.pack(side="left", fill="both", expand=True)
+        scrollbar_detail.pack(side="right", fill="y")
+
+        # Doppelklick zum Bearbeiten von Einträgen in der Detailansicht
+        self.history_detail_tree.bind("<Double-1>", self._on_history_detail_double_click)
+        self._hist_edit_entry = None
+        self._hist_current_plan_idx = None  # Index des aktuell angezeigten Plans
+
+        # Initial aktualisieren
+        self.root.after(300, self.update_history_display)
+
+    def update_history_display(self) -> None:
+        """Aktualisiert die Übersicht der gespeicherten Pläne"""
+        if not hasattr(self, 'history_tree'):
+            return
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+
+        # Pläne chronologisch sortiert anzeigen (neueste zuerst)
+        sorted_plans = sorted(
+            enumerate(self.saved_plans),
+            key=lambda x: datetime.strptime(x[1].get("start_date", "01.01.1900"), "%d.%m.%Y"),
+            reverse=True
+        )
+
+        for orig_idx, plan in sorted_plans:
+            zeitraum = f"{plan.get('start_date', '?')} – {plan.get('end_date', '?')}"
+            gespeichert = plan.get("saved_at", "?")
+            geaendert = "✓" if plan.get("manuell_geaendert", False) else "✗"
+            anmerkung = plan.get("anmerkung", "")
+            # Speichere den Original-Index als Tag für spätere Referenz
+            self.history_tree.insert("", tk.END, values=(zeitraum, gespeichert, geaendert, anmerkung),
+                                      tags=(str(orig_idx),))
+
+    def _get_selected_plan_index(self) -> Optional[int]:
+        """Gibt den Index des ausgewählten Plans zurück"""
+        selected = self.history_tree.selection()
+        if not selected:
+            messagebox.showwarning("Warnung", "Bitte einen Plan auswählen!")
+            return None
+        tags = self.history_tree.item(selected[0], "tags")
+        if tags:
+            return int(tags[0])
+        return None
+
+    def _view_plan_detail(self) -> None:
+        """Zeigt die Einträge des ausgewählten Plans in der Detailansicht"""
+        plan_idx = self._get_selected_plan_index()
+        if plan_idx is None:
+            return
+
+        self._hist_current_plan_idx = plan_idx
+        plan = self.saved_plans[plan_idx]
+
+        # Detail-Treeview leeren
+        for item in self.history_detail_tree.get_children():
+            self.history_detail_tree.delete(item)
+
+        # Einträge anzeigen
+        for entry in plan.get("entries", []):
+            tag_kurz = entry.get("Wochentag", "")[:2] if entry.get("Wochentag") else ""
+            self.history_detail_tree.insert(
+                "", tk.END,
+                values=(entry.get("Datum", ""), tag_kurz,
+                       entry.get("Vormittag", ""), entry.get("Nachmittag", ""),
+                       entry.get("Support", ""))
+            )
+
+    def _edit_plan_note(self) -> None:
+        """Öffnet ein Dialogfenster zur Bearbeitung der Anmerkung"""
+        plan_idx = self._get_selected_plan_index()
+        if plan_idx is None:
+            return
+
+        plan = self.saved_plans[plan_idx]
+        current_note = plan.get("anmerkung", "")
+
+        # Dialog erstellen
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Anmerkung bearbeiten")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="Anmerkung:", font=('Segoe UI', 10, 'bold')).pack(padx=10, pady=(10, 5), anchor="w")
+
+        text_widget = tk.Text(dialog, wrap=tk.WORD, width=45, height=5, font=('Segoe UI', 10))
+        text_widget.pack(padx=10, pady=5, fill="both", expand=True)
+        text_widget.insert("1.0", current_note)
+        text_widget.focus_set()
+
+        def save_note():
+            new_note = text_widget.get("1.0", tk.END).strip()
+            self.saved_plans[plan_idx]["anmerkung"] = new_note
+            self.save_history()
+            self.update_history_display()
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill="x", padx=10, pady=10)
+        ttk.Button(btn_frame, text="Speichern", command=save_note).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Abbrechen", command=dialog.destroy).pack(side="left", padx=5)
+
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+
+    def _delete_single_plan(self) -> None:
+        """Löscht einen einzelnen ausgewählten Plan"""
+        plan_idx = self._get_selected_plan_index()
+        if plan_idx is None:
+            return
+
+        plan = self.saved_plans[plan_idx]
+        zeitraum = f"{plan.get('start_date', '?')} – {plan.get('end_date', '?')}"
+
+        if messagebox.askyesno("Bestätigung", f"Plan '{zeitraum}' wirklich löschen?"):
+            self.saved_plans.pop(plan_idx)
+            self._hist_current_plan_idx = None
+            # Detail-Treeview leeren
+            for item in self.history_detail_tree.get_children():
+                self.history_detail_tree.delete(item)
+            self.save_history()
+            self.update_history_display()
+            self.update_evaluation_display()
+            messagebox.showinfo("Erfolg", f"Plan '{zeitraum}' gelöscht!")
+
+    def _on_history_detail_double_click(self, event) -> None:
+        """Handler für Doppelklick zum Bearbeiten einer Zelle in der Detailansicht"""
+        if self._hist_current_plan_idx is None:
+            return
+
+        if self._hist_edit_entry:
+            self._hist_confirm_edit()
+
+        region = self.history_detail_tree.identify("region", event.x, event.y)
+        if region != "cell":
+            return
+
+        column = self.history_detail_tree.identify_column(event.x)
+        item = self.history_detail_tree.identify_row(event.y)
+
+        if not item or not column:
+            return
+
+        col_idx = int(column.replace("#", ""))
+        # Nur VM, NM, Support editierbar (Spalten 3, 4, 5)
+        if col_idx < 3:
+            return
+
+        values = list(self.history_detail_tree.item(item, "values"))
+        current_value = values[col_idx - 1] if col_idx - 1 < len(values) else ""
+
+        bbox = self.history_detail_tree.bbox(item, column)
+        if not bbox:
+            return
+
+        x, y, width, height = bbox
+
+        self._hist_edit_entry = tk.Entry(self.history_detail_tree, width=width // 8)
+        self._hist_edit_entry.place(x=x, y=y, width=width, height=height)
+        self._hist_edit_entry.insert(0, current_value)
+        self._hist_edit_entry.select_range(0, tk.END)
+        self._hist_edit_entry.focus_set()
+
+        self._hist_edit_item = item
+        self._hist_edit_col_idx = col_idx
+        self._hist_edit_row_idx = self.history_detail_tree.index(item)
+
+        self._hist_edit_entry.bind("<Return>", lambda e: self._hist_confirm_edit())
+        self._hist_edit_entry.bind("<Escape>", lambda e: self._hist_cancel_edit())
+        self._hist_edit_entry.bind("<FocusOut>", lambda e: self._hist_confirm_edit())
+
+    def _hist_confirm_edit(self) -> None:
+        """Bestätigt die Bearbeitung in der Detailansicht und aktualisiert den gespeicherten Plan"""
+        if not self._hist_edit_entry or self._hist_current_plan_idx is None:
+            return
+
+        new_value = self._hist_edit_entry.get().strip()
+
+        # Treeview aktualisieren
+        values = list(self.history_detail_tree.item(self._hist_edit_item, "values"))
+        values[self._hist_edit_col_idx - 1] = new_value
+        self.history_detail_tree.item(self._hist_edit_item, values=values)
+
+        # Gespeicherten Plan aktualisieren
+        col_map = {3: "Vormittag", 4: "Nachmittag", 5: "Support"}
+        if self._hist_edit_col_idx in col_map:
+            plan = self.saved_plans[self._hist_current_plan_idx]
+            entries = plan.get("entries", [])
+            if self._hist_edit_row_idx < len(entries):
+                entries[self._hist_edit_row_idx][col_map[self._hist_edit_col_idx]] = new_value
+                plan["manuell_geaendert"] = True
+                self.save_history()
+                self.update_history_display()
+
+        self._hist_cleanup_edit()
+
+    def _hist_cancel_edit(self) -> None:
+        """Bricht die Bearbeitung in der Detailansicht ab"""
+        self._hist_cleanup_edit()
+
+    def _hist_cleanup_edit(self) -> None:
+        """Räumt das Edit-Widget in der Detailansicht auf"""
+        if self._hist_edit_entry:
+            self._hist_edit_entry.destroy()
+            self._hist_edit_entry = None
+        self._hist_edit_item = None
+        self._hist_edit_col_idx = None
+        self._hist_edit_row_idx = None
+
     def create_help_tab(self, notebook: ttk.Notebook) -> None:
         """Erstellt Tab für Hilfe und Anleitung"""
         help_frame = ttk.Frame(notebook, padding=10)
@@ -703,12 +965,16 @@ class ShiftPlanner:
             "start_date": start_date,
             "end_date": end_date,
             "saved_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
-            "entries": [row.copy() for row in self.planning_result]
+            "entries": [row.copy() for row in self.planning_result],
+            "anmerkung": "",
+            "manuell_geaendert": self._plan_manually_edited
         }
         self.saved_plans.append(new_plan)
+        self._plan_manually_edited = False  # Reset nach Speichern
         self.save_history()
         messagebox.showinfo("Erfolg", f"Plan vom {start_date} bis {end_date} gespeichert!")
         self.update_evaluation_display()
+        self.update_history_display()
 
     def update_evaluation_display(self) -> None:
         """Aktualisiert die Statistik-Anzeige basierend auf Filter"""
@@ -928,6 +1194,7 @@ class ShiftPlanner:
             self.saved_plans = []
             self.save_history()
             self.update_evaluation_display()
+            self.update_history_display()
             messagebox.showinfo("Erfolg", "Alle Pläne gelöscht!")
 
     # -------------------- Abwesenheiten --------------------
@@ -939,6 +1206,22 @@ class ShiftPlanner:
         self.employee_combo['values'] = all_employees
         messagebox.showinfo("Info", f"Mitarbeiterliste aktualisiert: {len(all_employees)} Mitarbeiter gefunden")
 
+    @staticmethod
+    def _working_day_to_tag_nr(working_day: int) -> int:
+        """Wandelt Arbeitstag-Index (0-9) in internen tag_nr (0-11, überspringe Sa=5,11) um."""
+        week = working_day // 5
+        day_in_week = working_day % 5
+        return week * DAYS_PER_WEEK + day_in_week
+
+    @staticmethod
+    def _tag_nr_to_working_day(tag_nr: int) -> int:
+        """Wandelt internen tag_nr (0-11) in Arbeitstag-Index (0-9) um."""
+        week = tag_nr // DAYS_PER_WEEK
+        day_in_week = tag_nr % DAYS_PER_WEEK
+        if day_in_week >= 5:  # Samstag
+            return -1  # Kein gültiger Arbeitstag
+        return week * 5 + day_in_week
+
     def add_absence(self) -> None:
         """Fügt eine Abwesenheit hinzu (unterstützt mehrere, komma-getrennte Kürzel)."""
         employee = self.employee_var.get().strip()
@@ -949,9 +1232,10 @@ class ShiftPlanner:
             return
 
         try:
-            day_nr = int(day_str.split()[1]) - 1  # "Tag 1" -> 0
-            if not (0 <= day_nr < DAYS_IN_PLANNING):
+            working_day = int(day_str.split()[1]) - 1  # "Tag 1" -> 0 (Arbeitstag-Index)
+            if not (0 <= working_day < WORKING_DAYS):
                 raise ValueError("Tag außerhalb des gültigen Bereichs")
+            day_nr = self._working_day_to_tag_nr(working_day)  # -> interner tag_nr
         except (ValueError, IndexError) as e:
             messagebox.showerror("Fehler", f"Ungültiger Tag: {e}")
             return
@@ -975,9 +1259,9 @@ class ShiftPlanner:
 
         # Feedback und automatischer Sprung zum nächsten Tag
         if added_count > 0:
-            current_day = day_nr + 1
-            if current_day < DAYS_IN_PLANNING:
-                self.day_var.set(f"Tag {current_day + 1}")
+            next_working_day = working_day + 1
+            if next_working_day < WORKING_DAYS:
+                self.day_var.set(f"Tag {next_working_day + 1}")
             # MA bleibt stehen für schnellere Mehrfacheingabe
 
     def remove_absence(self) -> None:
@@ -992,7 +1276,8 @@ class ShiftPlanner:
             values = self.absence_tree.item(item, 'values')
             day_str, employee = values[0], values[1]
             try:
-                day_nr = int(day_str.split()[1]) - 1
+                working_day = int(day_str.split()[1]) - 1
+                day_nr = self._working_day_to_tag_nr(working_day)
                 if day_nr in self.absences and employee in self.absences[day_nr]:
                     self.absences[day_nr].remove(employee)
                     if not self.absences[day_nr]:
@@ -1011,8 +1296,11 @@ class ShiftPlanner:
             self.absence_tree.delete(item)
 
         for day_nr in sorted(self.absences.keys()):
+            working_day = self._tag_nr_to_working_day(day_nr)
+            if working_day < 0:
+                continue  # Samstage überspringen
             for employee in sorted(self.absences[day_nr]):
-                self.absence_tree.insert("", tk.END, values=(f"Tag {day_nr + 1}", employee))
+                self.absence_tree.insert("", tk.END, values=(f"Tag {working_day + 1}", employee))
 
     # -------------------- Feiertage (dauerhaft gespeichert) --------------------
 
@@ -1578,6 +1866,7 @@ class ShiftPlanner:
         col_map = {3: "Vormittag", 4: "Nachmittag", 5: "Support"}
         if self._edit_col_idx in col_map:
             self.planning_result[self._edit_row_idx][col_map[self._edit_col_idx]] = new_value
+            self._plan_manually_edited = True  # Flag setzen bei nachträglicher Änderung
 
         self._cleanup_edit()
 

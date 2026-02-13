@@ -15,7 +15,7 @@
         {
           "Datum": "06.01.2026",
           "Wochentag": "Dienstag",
-          "Vormittag": "RR",
+          "Vormittag": "TR",
           "Nachmittag": "RR",
           "Support": "RR"
         },
@@ -89,7 +89,9 @@
           "Nachmittag": "",
           "Support": ""
         }
-      ]
+      ],
+      "manuell_geaendert": true,
+      "anmerkung": "Woche 2"
     },
     {
       "start_date": "19.01.2026",
@@ -148,7 +150,7 @@
         {
           "Datum": "27.01.2026",
           "Wochentag": "Dienstag",
-          "Vormittag": "MH",
+          "Vormittag": "RR",
           "Nachmittag": "RR",
           "Support": "FA"
         },
@@ -180,7 +182,8 @@
           "Nachmittag": "",
           "Support": ""
         }
-      ]
+      ],
+      "manuell_geaendert": true
     }
   ],
   "manual_corrections": {},
